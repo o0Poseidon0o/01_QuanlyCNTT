@@ -9,6 +9,14 @@ const authlogin =require('./src/routes/authloginRoutes/authloginRoutes')
 const avatarRoutes = require('./src/middleware/Users/avatarRoutes')
 const ramRouters = require('./src/routes/Technologyequipment/ramRouters')
 const memoryRouters = require('./src/routes/Technologyequipment/memoryRouters')
+const cpuRouters = require('./src/routes/Technologyequipment/cpuRouters')
+const operationsRouter=require('./src/routes/Technologyequipment/operationRouter')
+const devicestype=require('./src/routes/Technologyequipment/devicestypesRouters')
+const screen=require('./src/routes/Technologyequipment/screenrouters')
+const devices=require('./src/routes/Technologyequipment/devicesRouters')
+// ============================Stastic=======================================
+const stasdevicesRouters = require('./src/routes/Technologyequipment/stasDevices/stasdevicesRouters');
+const stasusersRouters = require('./src/routes/Technologyequipment/stasDevices/stasdevicesRouters');
 
 require('dotenv').config();
 const app = express();
@@ -28,6 +36,14 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/api/avatars",avatarRoutes);
 app.use("/api/ram",ramRouters)
 app.use("/api/memory",memoryRouters)
+app.use('/api/cpu',cpuRouters)
+app.use('/api/operations',operationsRouter)
+app.use('/api/devicestype',devicestype)
+app.use('/api/screen',screen)
+app.use('/api/devices',devices)
+//==============================Stastic=======================================
+app.use('/api/stasdevices',stasdevicesRouters)
+app.use('/api/stasusers',stasusersRouters)
 sequelize
   .sync()
   .then(() => {

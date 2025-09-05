@@ -8,7 +8,7 @@ const Devicetype = sequelize.define('Devicetype', {
   },
   device_type: {
     type: DataTypes.STRING,
-    allowNull: false,
+    allowNull: true,
   },
 }, {
   tableName: 'tb_devicetype',

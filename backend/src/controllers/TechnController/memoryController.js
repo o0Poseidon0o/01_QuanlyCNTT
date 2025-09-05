@@ -5,16 +5,17 @@ const { Op } = require("sequelize");
 // Lấy tất cả Memory
 const getAllMemory = async (req, res) => {
   try {
-    const memoryList = await Memory.findAll();
-    if (!memoryList || memoryList.length === 0) {
-      return res.status(404).json({ message: "Không có Memory nào." });
+    const memory = await Memory.findAll();
+    if (!memory || memory.length === 0) {
+      return res.status(404).json({ message: "No Memory found" });
     }
-    return res.status(200).json(memoryList);
+    return res.status(200).json(memory);
   } catch (error) {
-    console.error("Error in getAllMemory:", error);
-    return res.status(500).json({ message: "Internal server error", error });
+    console.error("Error retrieving Memory:", error);
+    return res.status(500).json({ message: "Error retrieving Memory", error: error.message });
   }
 };
+
 
 // Thêm Memory
 const addMemory = async (req, res) => {

@@ -3,25 +3,42 @@ const Department = require("../../models/Departments/departments");
 const Role = require("../../models/Roles/modelRoles");
 const bcrypt = require("bcrypt");
 const { Op } = require("sequelize");
-const path = require('path'); // Import module path
-const fs = require('fs'); // Import module fs để làm việc với file hệ thống
-
+const path = require("path"); // Import module path
+const fs = require("fs"); // Import module fs để làm việc với file hệ thống
 
 // Thêm người dùng
 const addUser = async (req, res) => {
-  const { id_users, username, email_user, password_user, id_departments, id_roles } = req.body;
-   // Kiểm tra nếu có file ảnh, nếu có lưu đường dẫn vào CSDL
-   const avatar = req.file ? `../../uploads/avatars/${req.file.filename}` : '../../uploads/avatars/default.jpg';
+  const {
+    id_users,
+    username,
+    email_user,
+    password_user,
+    id_departments,
+    id_roles,
+  } = req.body;
+  // Kiểm tra nếu có file ảnh, nếu có lưu đường dẫn vào CSDL
+  const avatar = req.file
+    ? `../../uploads/avatars/${req.file.filename}`
+    : "../../uploads/avatars/default.jpg";
 
   try {
     // Kiểm tra các giá trị đầu vào
-    if (!id_users || !username || !email_user || !password_user || !id_departments || !id_roles) {
+    if (
+      !id_users ||
+      !username ||
+      !email_user ||
+      !password_user ||
+      !id_departments ||
+      !id_roles
+    ) {
       return res.status(400).json({ message: "All fields are required." });
     }
 
     // Kiểm tra giá trị của id_users
     if (!Number.isInteger(Number(id_users)) || Number(id_users) <= 0) {
-      return res.status(400).json({ message: "Invalid user ID. ID must be a positive integer." });
+      return res
+        .status(400)
+        .json({ message: "Invalid user ID. ID must be a positive integer." });
     }
 
     // Kiểm tra email hợp lệ
@@ -40,7 +57,9 @@ const addUser = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password_user, 10);
 
     // Kiểm tra tồn tại bộ phận và vai trò
-    const departmentExists = await Department.findOne({ where: { id_departments } });
+    const departmentExists = await Department.findOne({
+      where: { id_departments },
+    });
     const roleExists = await Role.findOne({ where: { id_roles } });
 
     if (!departmentExists) {
@@ -64,14 +83,17 @@ const addUser = async (req, res) => {
     res.status(201).json({ message: "User added successfully", user: newUser });
   } catch (error) {
     console.error("Error adding user:", error);
-    res.status(500).json({ message: "Error adding user", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Error adding user", error: error.message });
   }
 };
 
 //Sửa người dùng
 const updateUser = async (req, res) => {
   const { id_users } = req.params;
-  const { username, email_user, password_user, id_departments, id_roles } = req.body;
+  const { username, email_user, password_user, id_departments, id_roles } =
+    req.body;
   const avatar = req.file ? `../../uploads/avatars/${req.file.filename}` : null; // Đảm bảo đường dẫn avatar chính xác
 
   try {
@@ -82,7 +104,9 @@ const updateUser = async (req, res) => {
     }
 
     // Mã hóa mật khẩu nếu có thay đổi
-    const hashedPassword = password_user ? await bcrypt.hash(password_user, 10) : user.password_user;
+    const hashedPassword = password_user
+      ? await bcrypt.hash(password_user, 10)
+      : user.password_user;
 
     // Cập nhật thông tin người dùng
     await user.update({
@@ -98,10 +122,11 @@ const updateUser = async (req, res) => {
     res.status(200).json({ message: "User updated successfully", user });
   } catch (error) {
     console.error("Error updating user:", error);
-    res.status(500).json({ message: "Error updating user", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Error updating user", error: error.message });
   }
 };
-
 
 // Xóa người dùng
 const deleteUser = async (req, res) => {
@@ -115,7 +140,9 @@ const deleteUser = async (req, res) => {
 
     // Kiểm tra nếu id_users không phải là số hợp lệ
     if (!Number.isInteger(Number(id_users)) || Number(id_users) <= 0) {
-      return res.status(400).json({ message: "Invalid user ID. ID must be a positive integer." });
+      return res
+        .status(400)
+        .json({ message: "Invalid user ID. ID must be a positive integer." });
     }
 
     // Tìm người dùng theo id
@@ -126,7 +153,13 @@ const deleteUser = async (req, res) => {
 
     // Xóa ảnh avatar nếu có
     if (user.avatar) {
-      const avatarPath = path.join(__dirname, '..', 'uploads', 'avatars', user.avatar); // Đảm bảo đường dẫn đúng
+      const avatarPath = path.join(
+        __dirname,
+        "..",
+        "uploads",
+        "avatars",
+        user.avatar
+      ); // Đảm bảo đường dẫn đúng
       if (fs.existsSync(avatarPath)) {
         fs.unlinkSync(avatarPath); // Xóa file avatar
       }
@@ -134,7 +167,7 @@ const deleteUser = async (req, res) => {
 
     // Xóa người dùng
     await user.destroy();
-    
+
     // Kiểm tra lại xem người dùng đã bị xóa chưa
     const deletedUser = await User.findByPk(id_users);
     if (!deletedUser) {
@@ -144,10 +177,11 @@ const deleteUser = async (req, res) => {
     }
   } catch (error) {
     console.error("Error deleting user:", error);
-    res.status(500).json({ message: "Error deleting user", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Error deleting user", error: error.message });
   }
 };
-
 
 // Tìm người dùng
 const searchUsers = async (req, res) => {
@@ -163,7 +197,8 @@ const searchUsers = async (req, res) => {
     ];
   }
 
-  if (id_users && !isNaN(id_users)) { // Kiểm tra nếu id_users là số
+  if (id_users && !isNaN(id_users)) {
+    // Kiểm tra nếu id_users là số
     // Tìm kiếm theo id_users nếu là số
     searchConditions[Op.or] = searchConditions[Op.or] || []; // Nếu chưa có Op.or, khởi tạo mảng
     searchConditions[Op.or].push({ id_users: parseInt(id_users) });
@@ -171,7 +206,7 @@ const searchUsers = async (req, res) => {
 
   try {
     const users = await User.findAll({
-      where: searchConditions
+      where: searchConditions,
     });
 
     if (users.length === 0) {
@@ -181,20 +216,26 @@ const searchUsers = async (req, res) => {
     res.status(200).json(users);
   } catch (error) {
     console.error("Error searching users:", error);
-    res.status(500).json({ message: "Error searching users", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Error searching users", error: error.message });
   }
 };
-
 
 // Lấy tất cả thông tin người dùng
 const getAllUser = async (req, res) => {
   try {
     // Lấy tất cả người dùng cùng thông tin bộ phận và vai trò
     const users = await User.findAll({
+      
       include: [
-        { model: Department, attributes: ['department_name'], as: 'Department' }, // Alias cho Department
-        { model: Role, attributes: ['name_role'], as: 'Role' } // Alias cho Role, sửa 'role_name' thành 'name_role'
-      ]
+        {
+          model: Department,
+          attributes: ["department_name"],
+          as: "Department",
+        }, // Alias cho Department
+        { model: Role, attributes: ["name_role"], as: "Role" }, // Alias cho Role, sửa 'role_name' thành 'name_role'
+      ],
     });
 
     if (!users || users.length === 0) {
@@ -204,24 +245,24 @@ const getAllUser = async (req, res) => {
     // Trả về thông tin tất cả người dùng
     res.status(200).json({
       message: "Users information retrieved successfully",
-      users: users.map(user => ({
+      users: users.map((user) => ({
         id_users: user.id_users,
         username: user.username,
         email_user: user.email_user,
         avatar: user.avatar,
-        department_name: user.Department ? user.Department.department_name : "No department",
-        role_name: user.Role ? user.Role.name_role : "No role" // Sử dụng 'name_role' để lấy tên vai trò
-      }))
+        department_name: user.Department
+          ? user.Department.department_name
+          : "No department",
+        role_name: user.Role ? user.Role.name_role : "No role", // Sử dụng 'name_role' để lấy tên vai trò
+      })),
     });
   } catch (error) {
     console.error("Error retrieving user info:", error);
-    res.status(500).json({ message: "Error retrieving user info", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Error retrieving user info", error: error.message });
   }
 };
-
-
-
-
 
 module.exports = {
   addUser,
