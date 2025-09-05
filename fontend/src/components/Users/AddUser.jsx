@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from "react";
 
+const API_BASE =
+  process.env.NODE_ENV === "production" ? "/api" : "http://localhost:5000/api";
+
 const AddUser = () => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [avatarUrl, setAvatarUrl] = useState(
-    "https://ilarge.lisimg.com/image/21867558/1118full-hyakujuu-sentai-gaoranger-photo.jpg"
-  ); // Ảnh mặc định
+  "https://avatars.dicebear.com/api/adventurer-neutral/default.svg"
+);// Ảnh mặc định
   const [departments, setDepartments] = useState([]); // Danh sách bộ phận
   const [roles, setRoles] = useState([]); // Danh sách vai trò
   const [userData, setUserData] = useState({
@@ -23,7 +26,7 @@ const AddUser = () => {
   const handleFileChange = (event) => {
     const file = event.target.files[0];
     if (!file) return;
-    
+
     const allowedTypes = ["image/jpeg", "image/png", "image/jpg"];
     if (!allowedTypes.includes(file.type)) {
       setMessage("Chỉ cho phép tải lên ảnh định dạng JPEG, PNG, hoặc JPG.");
@@ -60,7 +63,7 @@ const AddUser = () => {
     // Tạo FormData để gửi dữ liệu
     const formData = new FormData();
     if (selectedFile) {
-      const fileExtension = selectedFile.name.split('.').pop();
+      const fileExtension = selectedFile.name.split(".").pop();
       const newFileName = `${userData.id_users}.${fileExtension}`;
       formData.append("avatar", selectedFile, newFileName);
     }
@@ -72,9 +75,9 @@ const AddUser = () => {
     formData.append("id_roles", userData.id_roles);
 
     try {
-      const response = await fetch(`http://localhost:5000/api/users/add`, {
+      const response = await fetch(`${API_BASE}/users/add`, {
         method: "POST",
-        body: formData,
+        body: formData, // KHÔNG set Content-Type để trình duyệt tự thêm boundary
       });
       const data = await response.json();
 
@@ -109,8 +112,8 @@ const AddUser = () => {
   const fetchDepartmentsAndRoles = async () => {
     try {
       const responses = await Promise.all([
-        fetch("http://localhost:5000/api/departments/all-departments"),
-        fetch("http://localhost:5000/api/roles/all-roles"),
+        fetch(`${API_BASE}/departments/all-departments`),
+        fetch(`${API_BASE}/roles/all-roles`),
       ]);
       const [departmentsData, rolesData] = await Promise.all(
         responses.map((res) => res.json())
@@ -130,7 +133,7 @@ const AddUser = () => {
     const { name, value } = e.target;
     setUserData({ ...userData, [name]: value });
   };
-  
+
   return (
     <div className="flex flex-wrap mt-10">
       <div className="w-full lg:w-1/2 my-6 pr-0 lg:pr-2">
@@ -138,10 +141,7 @@ const AddUser = () => {
           <i className="fas fa-list mr-3"></i> Hình ảnh
         </p>
         <div className="leading-loose">
-          <form
-            className="p-10 bg-white rounded shadow-xl"
-            onSubmit={handleSubmit}
-          >
+          <form className="p-10 bg-white rounded shadow-xl" onSubmit={handleSubmit}>
             <img
               src={avatarUrl}
               alt="avatar"
@@ -166,10 +166,7 @@ const AddUser = () => {
         <div className="leading-loose">
           <form className="p-10 bg-white rounded shadow-xl" onSubmit={handleSubmit}>
             <div className="mt-2">
-              <label
-                className="block text-sm text-gray-600"
-                htmlFor="id_users"
-              >
+              <label className="block text-sm text-gray-600" htmlFor="id_users">
                 ID Người dùng
               </label>
               <input
@@ -184,10 +181,7 @@ const AddUser = () => {
               />
             </div>
             <div className="mt-2">
-              <label
-                className="block text-sm text-gray-600"
-                htmlFor="username"
-              >
+              <label className="block text-sm text-gray-600" htmlFor="username">
                 Tên người dùng
               </label>
               <input
@@ -202,10 +196,7 @@ const AddUser = () => {
               />
             </div>
             <div className="mt-2">
-              <label
-                className="block text-sm text-gray-600"
-                htmlFor="email_user"
-              >
+              <label className="block text-sm text-gray-600" htmlFor="email_user">
                 Email
               </label>
               <input
@@ -220,10 +211,7 @@ const AddUser = () => {
               />
             </div>
             <div className="mt-2">
-              <label
-                className="block text-sm text-gray-600"
-                htmlFor="password_user"
-              >
+              <label className="block text-sm text-gray-600" htmlFor="password_user">
                 Mật khẩu
               </label>
               <input
@@ -238,10 +226,7 @@ const AddUser = () => {
               />
             </div>
             <div className="mt-2">
-              <label
-                className="block text-sm text-gray-600"
-                htmlFor="id_departments"
-              >
+              <label className="block text-sm text-gray-600" htmlFor="id_departments">
                 Bộ phận
               </label>
               <select

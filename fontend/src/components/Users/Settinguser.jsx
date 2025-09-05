@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 
+const API_BASE =
+  process.env.NODE_ENV === "production" ? "/api" : "http://localhost:5000/api";
+
 const SettingUser = () => {
   const [users, setUsers] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -23,7 +26,7 @@ const SettingUser = () => {
   // Lấy danh sách người dùng
   const fetchUsers = async () => {
     try {
-      const response = await axios.get("http://localhost:5000/api/users/all");
+      const response = await axios.get(`${API_BASE}/users/all`);
       setUsers(response.data.users);
     } catch (error) {
       console.error("Error fetching users:", error);
@@ -36,8 +39,8 @@ const SettingUser = () => {
   const fetchDepartmentsAndRoles = async () => {
     try {
       const [departmentsResponse, rolesResponse] = await Promise.all([
-        axios.get("http://localhost:5000/api/departments/all-departments"),
-        axios.get("http://localhost:5000/api/roles/all-roles"),
+        axios.get(`${API_BASE}/departments/all-departments`),
+        axios.get(`${API_BASE}/roles/all-roles`),
       ]);
       setDepartments(departmentsResponse.data || []);
       setRoles(rolesResponse.data || []);
@@ -55,12 +58,9 @@ const SettingUser = () => {
   const searchUsers = async (e) => {
     if (e.key === "Enter") {
       try {
-        const response = await axios.get(
-          "http://localhost:5000/api/users/search",
-          {
-            params: { username: searchTerm, id_users: searchTerm },
-          }
-        );
+        const response = await axios.get(`${API_BASE}/users/search`, {
+          params: { username: searchTerm, id_users: searchTerm },
+        });
         setUsers(response.data);
       } catch (error) {
         console.error("Error searching users:", error);
@@ -79,7 +79,7 @@ const SettingUser = () => {
     if (window.confirm("Bạn có chắc chắn muốn xóa người dùng này?")) {
       try {
         const response = await axios.delete(
-          `http://localhost:5000/api/users/delete/${id_users}`
+          `${API_BASE}/users/delete/${id_users}`
         );
         alert(response.data.message);
         fetchUsers();
@@ -119,7 +119,7 @@ const SettingUser = () => {
   const updateUser = async () => {
     try {
       const response = await axios.put(
-        `http://localhost:5000/api/users/update/${editingUser.id_users}`,
+        `${API_BASE}/users/update/${editingUser.id_users}`,
         formData
       );
       alert(response.data.message);
@@ -182,7 +182,7 @@ const SettingUser = () => {
               <tr key={user.id_users} className="hover:bg-grey-lighter">
                 <td className="py-4 px-6">
                   <img
-                    src={`http://localhost:5000/api/avatars/${user.id_users}`}
+                    src={`${API_BASE}/avatars/${user.id_users}`}
                     alt="Avatar"
                     className="w-24 h-24 rounded-full transform transition-transform duration-300 hover:scale-150 border-4 shadow-lg"
                     onError={(e) => {
