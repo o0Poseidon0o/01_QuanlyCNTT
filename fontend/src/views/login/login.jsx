@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-
 import logo from "../../images/logo/logo_towa.png";
 
+
+const API_BASE = "http://localhost:5000/api";
 const LoginPage = () => {
   const [formData, setFormData] = useState({ id_users: "", password_user: "" });
   const [error, setError] = useState("");
@@ -18,7 +19,7 @@ const LoginPage = () => {
     setError("");
 
     try {
-      const res = await axios.post("http://localhost:5000/api/auth/login", formData);
+      const res = await axios.post(`${API_BASE}/auth/login`, formData);
       const { token, role,id_users } = res.data;
 
       // Lưu thông tin đăng nhập vào localStorage
