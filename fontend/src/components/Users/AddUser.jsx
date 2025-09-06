@@ -1,13 +1,208 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 
 const API_BASE =
   process.env.NODE_ENV === "production" ? "/api" : "http://localhost:5000/api";
 
+/** ========= Combo gõ–tìm cho Bộ phận ========= */
+const DepartmentCombo = ({
+  departments,
+  value,                 // id_departments hiện tại
+  onChange,              // (id) => void
+  placeholder = "Gõ mã hoặc tên bộ phận...",
+  maxItems = 12,
+}) => {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const wrapRef = useRef(null);
+  const listRef = useRef(null);
+  const [activeIdx, setActiveIdx] = useState(0);
+
+  // Sắp xếp: theo mã (ưu tiên numeric), sau đó theo tên
+  const sorted = useMemo(() => {
+    const parseMaybeNumber = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : String(v ?? "");
+    };
+    return [...(departments || [])].sort((a, b) => {
+      const A = parseMaybeNumber(a.id_departments);
+      const B = parseMaybeNumber(b.id_departments);
+      if (typeof A === "number" && typeof B === "number") {
+        if (A !== B) return A - B;
+      } else {
+        const cmpCode = String(A).localeCompare(String(B), "vi");
+        if (cmpCode !== 0) return cmpCode;
+      }
+      return String(a.department_name || "").localeCompare(
+        String(b.department_name || ""),
+        "vi"
+      );
+    });
+  }, [departments]);
+
+  // Tìm label hiển thị cho value hiện tại
+  const currentLabel = useMemo(() => {
+    const found = (sorted || []).find(
+      (d) => String(d.id_departments) === String(value)
+    );
+    if (!found) return "";
+    return `${found.id_departments} — ${found.department_name}`;
+  }, [sorted, value]);
+
+  // Lọc theo query (mã hoặc tên)
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return sorted.slice(0, maxItems);
+    const out = sorted.filter((d) => {
+      const code = String(d.id_departments ?? "").toLowerCase();
+      const name = String(d.department_name ?? "").toLowerCase();
+      return code.includes(q) || name.includes(q);
+    });
+    return out.slice(0, maxItems);
+  }, [sorted, query, maxItems]);
+
+  // Đóng khi click ra ngoài
+  useEffect(() => {
+    const onDoc = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  // Điều khiển bàn phím
+  const handleKeyDown = (e) => {
+    if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      setOpen(true);
+      return;
+    }
+    if (!open) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIdx((idx) =>
+        Math.min(idx + 1, Math.max(0, filtered.length - 1))
+      );
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIdx((idx) => Math.max(idx - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const item = filtered[activeIdx];
+      if (item) {
+        onChange(item.id_departments);
+        setOpen(false);
+        setQuery(
+          `${item.id_departments} — ${item.department_name}` // hiển thị lại label
+        );
+      }
+    } else if (e.key === "Escape") {
+      setOpen(false);
+    }
+  };
+
+  useEffect(() => {
+    // cuộn active item vào view
+    if (!listRef.current) return;
+    const el = listRef.current.querySelector(`[data-idx="${activeIdx}"]`);
+    if (el && el.scrollIntoView) {
+      el.scrollIntoView({ block: "nearest" });
+    }
+  }, [activeIdx, filtered.length]);
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          className="w-full px-5 py-1 text-gray-700 bg-gray-200 rounded"
+          placeholder={placeholder}
+          value={open ? query : (query || currentLabel)}
+          onFocus={() => {
+            setOpen(true);
+            // nếu chưa từng gõ, hiển thị danh sách luôn nhưng giữ label hiện tại
+            setQuery(query || "");
+            setActiveIdx(0);
+          }}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+            setActiveIdx(0);
+          }}
+          onKeyDown={handleKeyDown}
+        />
+        {/* Nút xóa chọn */}
+        {value && (
+          <button
+            type="button"
+            className="px-3 bg-gray-300 rounded hover:bg-gray-400"
+            title="Xóa chọn"
+            onClick={() => {
+              onChange("");
+              setQuery("");
+              setOpen(false);
+            }}
+          >
+            ×
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="absolute mt-1 w-full bg-white border rounded shadow z-50">
+          <div
+            ref={listRef}
+            className="max-h-60 overflow-auto divide-y divide-gray-100"
+          >
+            {filtered.length === 0 ? (
+              <div className="px-3 py-2 text-sm text-gray-500">
+                Không có kết quả
+              </div>
+            ) : (
+              filtered.map((d, idx) => {
+                const isActive = idx === activeIdx;
+                return (
+                  <div
+                    key={d.id_departments}
+                    data-idx={idx}
+                    className={`px-3 py-2 cursor-pointer ${
+                      isActive ? "bg-blue-50" : "hover:bg-gray-50"
+                    }`}
+                    onMouseEnter={() => setActiveIdx(idx)}
+                    onMouseDown={(e) => {
+                      // dùng onMouseDown để không mất focus input trước khi onClick
+                      e.preventDefault();
+                      onChange(d.id_departments);
+                      setQuery(`${d.id_departments} — ${d.department_name}`);
+                      setOpen(false);
+                    }}
+                  >
+                    <div className="font-medium">
+                      {d.id_departments} — {d.department_name}
+                    </div>
+                    {d.department_content ? (
+                      <div className="text-xs text-gray-500 line-clamp-1">
+                        {d.department_content}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/** =============== AddUser gốc (giữ nguyên, chỉ thay phần Bộ phận) =============== */
 const AddUser = () => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [avatarUrl, setAvatarUrl] = useState(
-  "https://avatars.dicebear.com/api/adventurer-neutral/default.svg"
-);// Ảnh mặc định
+    "https://avatars.dicebear.com/api/adventurer-neutral/default.svg"
+  ); // Ảnh mặc định
   const [departments, setDepartments] = useState([]); // Danh sách bộ phận
   const [roles, setRoles] = useState([]); // Danh sách vai trò
   const [userData, setUserData] = useState({
@@ -225,29 +420,24 @@ const AddUser = () => {
                 onChange={handleChange}
               />
             </div>
+
+            {/* ===== Bộ phận: gõ–tìm (thay cho <select>) ===== */}
             <div className="mt-2">
               <label className="block text-sm text-gray-600" htmlFor="id_departments">
                 Bộ phận
               </label>
-              <select
-                className="w-full px-5 py-1 text-gray-700 bg-gray-200 rounded"
-                id="id_departments"
-                name="id_departments"
-                required
+              <DepartmentCombo
+                departments={departments}
                 value={userData.id_departments}
-                onChange={handleChange}
-              >
-                <option value="">Chọn bộ phận</option>
-                {departments.map((department) => (
-                  <option
-                    key={department.id_departments}
-                    value={department.id_departments}
-                  >
-                    {department.department_name}
-                  </option>
-                ))}
-              </select>
+                onChange={(val) =>
+                  setUserData((p) => ({ ...p, id_departments: String(val || "") }))
+                }
+                placeholder="Gõ mã hoặc tên bộ phận..."
+              />
+              {/* Nếu bạn vẫn muốn cho xem value hiện tại (ẩn đi cũng được) */}
+              {/* <div className="text-xs text-gray-500 mt-1">id_departments: {userData.id_departments || "—"}</div> */}
             </div>
+
             <div className="mt-2">
               <label className="block text-sm text-gray-600" htmlFor="id_roles">
                 Vai trò
@@ -268,6 +458,7 @@ const AddUser = () => {
                 ))}
               </select>
             </div>
+
             <div className="mt-4">
               <button
                 className="px-4 py-1 text-white font-light tracking-wider bg-gray-900 rounded"

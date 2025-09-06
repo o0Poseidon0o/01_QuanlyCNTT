@@ -1,7 +1,26 @@
-import React from 'react';
-
+import React from "react";
+import Sidebar from "../../components/Sidebar/Sidebar";
+import AdminNavbar from "../../components/Navabar/AdminNavbar"
+import Userprofile from "../../components/Users/ProfileUsers";
 const UserProfile = () => {
-    return <h2>User Profile</h2>;
+    return (
+    <>
+      <Sidebar></Sidebar>
+      <div className="relative md:ml-64 bg-slate-100">
+        <AdminNavbar />
+        <div className="px-4 md:px-10 mx-auto w-full m-10 absolute">
+        <Userprofile/>
+        </div>
+        
+        
+        {/* Header
+        <HeaderStats /> */}
+        {/* <div className="px-4 md:px-10 mx-auto w-full -m-24">
+          
+        </div> */}
+      </div>
+    </>
+  );
 };
 
 export default UserProfile;

@@ -181,14 +181,17 @@ const SettingUser = () => {
             {users.map((user) => (
               <tr key={user.id_users} className="hover:bg-grey-lighter">
                 <td className="py-4 px-6">
-                  <img
-                    src={`${API_BASE}/avatars/${user.id_users}`}
-                    alt="Avatar"
-                    className="w-24 h-24 rounded-full transform transition-transform duration-300 hover:scale-150 border-4 shadow-lg"
-                    onError={(e) => {
-                      e.target.src = "/default-avatar.jpg";
-                    }}
-                  />
+                  <div className="w-12 h-12 sm:w-16 sm:h-16 md:w-20 md:h-20 lg:w-24 lg:h-24 shrink-0">
+                    <img
+                      src={`${API_BASE}/avatars/${user.id_users}`}
+                      alt="Avatar"
+                      loading="lazy"
+                      className="w-full h-full rounded-full object-cover object-center transition-transform duration-300 md:hover:scale-150 border shadow-lg"
+                      onError={(e) => {
+                        e.currentTarget.src = "/default-avatar.jpg";
+                      }}
+                    />
+                  </div>
                 </td>
                 <td className="py-4 px-6">{user.id_users}</td>
                 <td className="py-4 px-6">{user.username}</td>

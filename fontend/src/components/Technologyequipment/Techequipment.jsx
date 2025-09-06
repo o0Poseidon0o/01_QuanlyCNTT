@@ -134,6 +134,9 @@ const TechEquipment = () => {
     date_warranty: "",
   });
 
+  // --- Sort theo ID ---
+  const [idSortDir, setIdSortDir] = useState("desc"); // "asc" | "desc"
+
   // Lấy danh sách thiết bị (chống cache)
   const fetchDevices = async () => {
     try {
@@ -203,12 +206,27 @@ const TechEquipment = () => {
     fetchDropdownData();
   }, []);
 
-  // Tìm kiếm
+  // Filter
   const filteredDevices = devices.filter((d) => {
     const nameOk = (d.name_devices || "").toLowerCase().includes(searchTerm.toLowerCase());
     const userOk = (d.User?.username || "").toLowerCase().includes(searchTerm.toLowerCase());
     return nameOk || userOk;
   });
+
+  // Sort theo ID (numeric ưu tiên; nếu không phải số thì so sánh chuỗi)
+  const sortedFilteredDevices = useMemo(() => {
+    const parseMaybeNumber = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : v ?? "";
+    };
+    const dir = idSortDir === "asc" ? 1 : -1;
+    return [...filteredDevices].sort((a, b) => {
+      const A = parseMaybeNumber(a.id_devices);
+      const B = parseMaybeNumber(b.id_devices);
+      if (typeof A === "number" && typeof B === "number") return (A - B) * dir;
+      return String(A).localeCompare(String(B), "vi") * dir;
+    });
+  }, [filteredDevices, idSortDir]);
 
   // MỞ modal thêm/sửa (reload dropdown TRƯỚC khi mở)
   const openAddModal = async () => {
@@ -357,7 +375,17 @@ const TechEquipment = () => {
         <table className="text-left w-full border-collapse">
           <thead>
             <tr className="bg-gray-100">
-              <th className="py-2 px-3">ID</th>
+              <th className="py-2 px-3">
+                <button
+                  type="button"
+                  className="flex items-center gap-1 select-none"
+                  onClick={() => setIdSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+                  title="Sắp xếp theo ID"
+                >
+                  ID
+                  <span className="text-xs">{idSortDir === "asc" ? "▲" : "▼"}</span>
+                </button>
+              </th>
               <th className="py-2 px-3">
                 Loại thiết bị
                 {isAdmin && (
@@ -438,7 +466,7 @@ const TechEquipment = () => {
             </tr>
           </thead>
           <tbody>
-            {filteredDevices.map((device) => (
+            {sortedFilteredDevices.map((device) => (
               <tr key={device.id_devices} className="border-t">
                 <td className="py-2 px-3">{device.id_devices}</td>
                 <td className="py-2 px-3">{device?.Devicetype?.device_type || "—"}</td>
@@ -473,7 +501,7 @@ const TechEquipment = () => {
                 )}
               </tr>
             ))}
-            {filteredDevices.length === 0 && (
+            {sortedFilteredDevices.length === 0 && (
               <tr>
                 <td className="py-4 px-3 text-center text-gray-500" colSpan={isAdmin ? 12 : 11}>
                   Không có thiết bị
