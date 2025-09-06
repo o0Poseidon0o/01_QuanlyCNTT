@@ -8,7 +8,6 @@ const DEFAULT_AVT =
   "https://avatars.dicebear.com/api/adventurer-neutral/default.svg";
 
 const UserProfile = () => {
-  // Lấy id người dùng đã đăng nhập
   const [userId] = useState(
     typeof window !== "undefined" ? localStorage.getItem("id_users") || "" : ""
   );
@@ -16,16 +15,15 @@ const UserProfile = () => {
   const [loading, setLoading] = useState(Boolean(userId));
   const [error, setError] = useState("");
 
-  // Danh sách bộ phận để map id -> tên (fallback)
   const [departments, setDepartments] = useState([]);
+  const [devices, setDevices] = useState([]);
 
-  // Ảnh avatar (cache-busting nhẹ)
+  // ---- Derived
   const avatarUrl = useMemo(() => {
     if (!user?.id_users) return DEFAULT_AVT;
     return `${API_BASE}/avatars/${user.id_users}?t=${user?.updated_at || ""}`;
   }, [user]);
 
-  // Map id_departments -> department_name
   const deptMap = useMemo(() => {
     const m = {};
     (departments || []).forEach((d) => {
@@ -34,7 +32,6 @@ const UserProfile = () => {
     return m;
   }, [departments]);
 
-  // Lấy tên bộ phận (ưu tiên các field nếu backend đã join)
   const departmentName = useMemo(() => {
     if (!user) return "—";
     return (
@@ -46,7 +43,7 @@ const UserProfile = () => {
     );
   }, [user, deptMap]);
 
-  // Gọi API lấy chính user đang đăng nhập
+  // ---- Data fetching (giữ nguyên logic)
   useEffect(() => {
     const fetchUser = async (id) => {
       if (!id) return;
@@ -57,18 +54,11 @@ const UserProfile = () => {
           params: { id_users: id },
           headers: { "Cache-Control": "no-cache" },
         });
-
-        // Chuẩn hoá payload
         let data = null;
-        if (Array.isArray(res.data)) {
-          data = res.data[0] || null;
-        } else if (res.data?.user) {
-          data = res.data.user;
-        } else if (Array.isArray(res.data?.users)) {
-          data = res.data.users[0] || null;
-        } else {
-          data = res.data || null;
-        }
+        if (Array.isArray(res.data)) data = res.data[0] || null;
+        else if (res.data?.user) data = res.data.user;
+        else if (Array.isArray(res.data?.users)) data = res.data.users[0] || null;
+        else data = res.data || null;
 
         if (!data) {
           setError("Không tìm thấy người dùng.");
@@ -88,123 +78,232 @@ const UserProfile = () => {
     if (userId) fetchUser(userId);
   }, [userId]);
 
-  // Lấy danh sách bộ phận để fallback tên
   useEffect(() => {
     const fetchDepartments = async () => {
       try {
-        const res = await axios.get(`${API_BASE}/departments/all-departments`, {
-          headers: { "Cache-Control": "no-cache" },
-        });
+        const res = await axios.get(`${API_BASE}/departments/all-departments`);
         setDepartments(Array.isArray(res.data) ? res.data : res.data?.departments || []);
-      } catch (e) {
-        console.warn("Không tải được danh sách bộ phận (fallback vẫn OK).", e?.message);
+      } catch {
         setDepartments([]);
       }
     };
     fetchDepartments();
   }, []);
 
-  // Trường hợp chưa đăng nhập
+  useEffect(() => {
+    const fetchDevices = async () => {
+      if (!userId) return;
+      try {
+        const res = await axios.get(`${API_BASE}/devices/all`);
+        const allDevices = Array.isArray(res.data) ? res.data : [];
+        const userDevices = allDevices.filter(
+          (d) => String(d.id_users) === String(userId)
+        );
+        setDevices(userDevices);
+      } catch (e) {
+        console.warn("Không tải được thiết bị:", e.message);
+        setDevices([]);
+      }
+    };
+    fetchDevices();
+  }, [userId]);
+
+  // ---- ERP action tiles (tối giản, không dùng lib)
+  const actions = [
+    {
+      key: "repair",
+      label: "Yêu cầu sửa chữa",
+      onClick: () => alert("Đi tới: Yêu cầu sửa chữa thiết bị"),
+      icon: (
+        <svg viewBox="0 0 24 24" className="w-5 h-5">
+          <path d="M3 21l6-6m3-3l9-9M9 15l3 3m0-6l-3-3" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
+        </svg>
+      ),
+    },
+    {
+      key: "exam",
+      label: "Bài kiểm tra nâng bậc",
+      onClick: () => alert("Đi tới: Bài kiểm tra nâng bậc"),
+      icon: (
+        <svg viewBox="0 0 24 24" className="w-5 h-5">
+          <path d="M4 19h16M6 17l6-10 6 10M12 7v10" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
+        </svg>
+      ),
+    },
+    {
+      key: "vote",
+      label: "Bình chọn",
+      onClick: () => alert("Đi tới: Bình chọn"),
+      icon: (
+        <svg viewBox="0 0 24 24" className="w-5 h-5">
+          <path d="M4 7h16v10H4zM9 12l2 2 4-4" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
+        </svg>
+      ),
+    },
+  ];
+
+  // ---- Empty state khi chưa đăng nhập
   if (!userId) {
     return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center p-6">
-        <div className="bg-white shadow rounded-2xl w-full max-w-xl p-6 text-center">
-          <h1 className="text-2xl font-bold text-gray-800 mb-2">Hồ sơ người dùng</h1>
-          <p className="text-gray-600">
-            Chưa xác định người dùng. Vui lòng đăng nhập để xem hồ sơ.
-          </p>
+      <div className="min-h-screen bg-neutral-100 flex items-center justify-center p-6">
+        <div className="bg-white border border-neutral-200 rounded-xl w-full max-w-xl p-6 text-center">
+          <h1 className="text-xl font-semibold text-neutral-900 mb-2">Hồ sơ người dùng</h1>
+          <p className="text-neutral-600">Vui lòng đăng nhập để xem hồ sơ.</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-6 mt-10">
-      <div className="bg-white shadow-lg rounded-2xl w-full max-w-2xl p-6">
-        <h1 className="text-2xl font-bold text-gray-800 mb-6">Hồ sơ người dùng</h1>
-
-        {/* Loading / Error */}
-        {loading && <div className="text-gray-500">Đang tải dữ liệu...</div>}
-        {!loading && error && (
-          <div className="text-red-600 bg-red-50 p-3 rounded border border-red-200">
-            {error}
+    <div className="min-h-screen bg-neutral-100 p-6 mt-10">
+      <div className="mx-auto w-full max-w-6xl grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Sidebar: Thông tin cơ bản */}
+        <section className="bg-white border border-neutral-200 rounded-xl">
+          <div className="p-6 border-b border-neutral-200">
+            <h2 className="text-base font-semibold text-neutral-900">Hồ sơ người dùng</h2>
           </div>
-        )}
 
-        {/* Nội dung (Read-only) */}
-        {!loading && !error && user && (
-          <div className="grid grid-cols-1 md:grid-cols-[180px,1fr] gap-6">
-            {/* Avatar + tên */}
-            <div className="flex flex-col items-center">
-              <div className="w-36 h-36 rounded-full overflow-hidden border-4 border-blue-500 shadow">
-                <img
-                  src={avatarUrl}
-                  alt="Avatar"
-                  className="w-full h-full object-cover object-center"
-                  onError={(e) => {
-                    e.currentTarget.src = DEFAULT_AVT;
-                  }}
-                  loading="lazy"
-                />
+          {/* Loading skeleton for sidebar */}
+          {loading ? (
+            <div className="p-6 animate-pulse">
+              <div className="mx-auto w-28 h-28 rounded-full bg-neutral-200" />
+              <div className="mt-4 h-4 w-40 bg-neutral-200 rounded mx-auto" />
+              <div className="mt-2 h-3 w-28 bg-neutral-200 rounded mx-auto" />
+              <div className="mt-4 h-3 w-24 bg-neutral-200 rounded mx-auto" />
+            </div>
+          ) : (
+            !error && user && (
+              <div className="p-6">
+                <div className="flex flex-col items-center">
+                  <div className="w-28 h-28 rounded-full overflow-hidden border border-neutral-200">
+                    <img
+                      src={avatarUrl}
+                      alt="Avatar"
+                      className="w-full h-full object-cover object-center"
+                      onError={(e) => (e.currentTarget.src = DEFAULT_AVT)}
+                      loading="lazy"
+                    />
+                  </div>
+                  <div className="mt-4 text-center">
+                    <div className="text-sm font-medium text-neutral-900">{user.username || "—"}</div>
+                    <div className="text-xs text-neutral-600 mt-0.5">
+                      {user.role_name || user?.Role?.name_role || "—"}
+                    </div>
+                    <div className="text-[11px] text-neutral-500 mt-2">ID: {user.id_users}</div>
+                  </div>
+                </div>
               </div>
-              <h2 className="mt-4 text-xl font-semibold text-gray-800 text-center">
-                {user.username || "—"}
-              </h2>
-              <p className="text-gray-500 text-center">
-                {user.role_name || user?.Role?.name_role || "—"}
-              </p>
-              <div className="mt-3 text-xs text-gray-500">
-                ID: <span className="font-mono">{user.id_users}</span>
-              </div>
+            )
+          )}
+        </section>
+
+        {/* Main: Thông tin chi tiết + Thiết bị + Chức năng */}
+        <section className="lg:col-span-2 space-y-6">
+          {/* Card: Thông tin chi tiết */}
+          <div className="bg-white border border-neutral-200 rounded-xl">
+            <div className="p-4 border-b border-neutral-200">
+              <h3 className="text-sm font-semibold text-neutral-900">Thông tin chi tiết</h3>
             </div>
 
-            {/* Thông tin chi tiết */}
-            <div className="space-y-4">
-              <div className="grid grid-cols-12 gap-2 items-center">
-                <div className="col-span-4 text-gray-600 font-medium">Email</div>
-                <div className="col-span-8 text-gray-800 break-words">
-                  {user.email_user || "—"}
-                </div>
+            {loading ? (
+              <div className="p-4 animate-pulse space-y-3">
+                {[...Array(4)].map((_, i) => (
+                  <div key={i} className="grid grid-cols-12 gap-3 items-center">
+                    <div className="col-span-4 h-3 bg-neutral-200 rounded" />
+                    <div className="col-span-8 h-3 bg-neutral-200 rounded" />
+                  </div>
+                ))}
               </div>
-              <div className="grid grid-cols-12 gap-2 items-center">
-                <div className="col-span-4 text-gray-600 font-medium">Bộ phận</div>
-                <div className="col-span-8 text-gray-800">
-                  {departmentName}
-                </div>
+            ) : error ? (
+              <div className="p-4 text-sm text-red-700 bg-red-50 border-t border-red-200">{error}</div>
+            ) : user ? (
+              <div className="divide-y divide-neutral-200">
+                <Row label="Email" value={user.email_user || "—"} />
+                <Row label="Bộ phận" value={departmentName} />
+                <Row label="Mã bộ phận" value={user.id_departments || "—"} />
+                <Row label="Mã vai trò" value={user.id_roles || "—"} />
               </div>
-              <div className="grid grid-cols-12 gap-2 items-center">
-                <div className="col-span-4 text-gray-600 font-medium">Mã bộ phận</div>
-                <div className="col-span-8 text-gray-800">
-                  {user.id_departments || "—"}
-                </div>
-              </div>
-              <div className="grid grid-cols-12 gap-2 items-center">
-                <div className="col-span-4 text-gray-600 font-medium">Mã vai trò</div>
-                <div className="col-span-8 text-gray-800">
-                  {user.id_roles || "—"}
-                </div>
-              </div>
+            ) : null}
+          </div>
 
-              {/* Sau này bật chức năng gửi yêu cầu sửa chữa thiết bị */}
-              {/*
-              <div className="pt-2">
+          {/* Card: Thiết bị (bảng gọn) */}
+          <div className="bg-white border border-neutral-200 rounded-xl">
+            <div className="p-4 border-b border-neutral-200 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-neutral-900">Thiết bị đang sử dụng</h3>
+              <div className="text-xs text-neutral-500">{devices.length} mục</div>
+            </div>
+            <div className="p-0">
+              {devices.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-neutral-50 text-neutral-600">
+                      <tr>
+                        <Th>ID thiết bị</Th>
+                        <Th>Tên thiết bị</Th>
+                        <Th className="hidden md:table-cell">Ghi chú</Th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-200">
+                      {devices.map((d) => (
+                        <tr key={d.id_devices} className="hover:bg-neutral-50">
+                          <Td className="font-medium text-neutral-800">{d.id_devices}</Td>
+                          <Td>{d.name_devices || "—"}</Td>
+                          <Td className="hidden md:table-cell text-neutral-500">
+                            {/* chỗ này tuỳ backend của bạn */}
+                            {d.DeviceNote || d.note || "—"}
+                          </Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-4 text-sm text-neutral-600">Không có thiết bị.</div>
+              )}
+            </div>
+          </div>
+
+          {/* Card: Chức năng (tiles ERP) */}
+          <div className="bg-white border border-neutral-200 rounded-xl">
+            <div className="p-4 border-b border-neutral-200">
+              <h3 className="text-sm font-semibold text-neutral-900">Chức năng</h3>
+            </div>
+            <div className="p-4 grid grid-cols-2 md:grid-cols-3 gap-3">
+              {actions.map((a) => (
                 <button
+                  key={a.key}
                   type="button"
-                  className="px-4 py-2 bg-emerald-500 text-white rounded-lg shadow hover:bg-emerald-600"
-                  onClick={() => {
-                    // navigate(`/ticket/new?user=${user.id_users}`)
-                  }}
+                  onClick={a.onClick}
+                  className="group border border-neutral-200 rounded-lg px-3 py-3 text-left hover:border-neutral-300 focus:outline-none focus:ring-2 focus:ring-neutral-300 transition"
                 >
-                  Gửi yêu cầu sửa chữa thiết bị
+                  <div className="flex items-center gap-3">
+                    <span className="text-neutral-600 group-hover:text-neutral-800">{a.icon}</span>
+                    <span className="text-sm font-medium text-neutral-800">{a.label}</span>
+                  </div>
                 </button>
-              </div>
-              */}
+              ))}
             </div>
           </div>
-        )}
+        </section>
       </div>
     </div>
   );
 };
+
+// ---------- Sub components (ERP style) ----------
+const Row = ({ label, value }) => (
+  <div className="grid grid-cols-12 gap-3 p-3">
+    <div className="col-span-4 text-xs uppercase tracking-wide text-neutral-500">{label}</div>
+    <div className="col-span-8 text-sm text-neutral-900">{value}</div>
+  </div>
+);
+
+const Th = ({ children, className = "" }) => (
+  <th className={`text-left text-xs font-medium uppercase tracking-wide px-3 py-2 ${className}`}>{children}</th>
+);
+
+const Td = ({ children, className = "" }) => (
+  <td className={`px-3 py-2 text-sm text-neutral-800 ${className}`}>{children}</td>
+);
 
 export default UserProfile;

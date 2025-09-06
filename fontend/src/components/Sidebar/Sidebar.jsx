@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 
 import UserDropdown from "../Dropdowns/UserDropdown";
 import { useState } from "react";
+import logo from "../../images/logo/logo_towa.png";
 
 export default function Sidebar() {
   const [collapseShow, setCollapseShow] = useState("hidden");
@@ -24,7 +25,9 @@ export default function Sidebar() {
             className="md:block text-left md:pb-2 text-blueGray-600 mr-0 inline-block whitespace-nowrap text-sm uppercase font-bold p-4 px-0"
             to="/"
           >
-            Towa Viet Nam
+            
+            <img src={logo}
+                      alt="Logo"className="w-1/2 h-auto"/>
           </Link>
           {/* User */}
           <ul className="md:hidden items-center flex flex-wrap list-none">
@@ -47,7 +50,8 @@ export default function Sidebar() {
                     className="md:block text-left md:pb-2 text-blueGray-600 mr-0 inline-block whitespace-nowrap text-sm uppercase font-bold p-4 px-0"
                     to="/"
                   >
-                    Towa Viet Nam
+                    <img src={logo}
+                      alt="Logo"/>
                   </Link>
                 </div>
                 <div className="w-6/12 flex justify-end">
@@ -72,6 +76,20 @@ export default function Sidebar() {
               </div>
             </form>
             {/* Divider */}
+            <hr className="my-4 md:min-w-full" />
+            {/* Navigation */}
+
+            <ul className="md:flex-col md:min-w-full flex flex-col list-none md:mb-4">
+              <li className="items-center">
+                <Link
+                  className="text-blueGray-700 hover:text-red-600 y-500 text-xs uppercase py-3 font-bold block"
+                  to="/userprofile"
+                >
+                  <i className="fas fa-user-circle text-blueGray-400 mr-2 text-sm"></i>{" "}
+                  Thông tin của tài khoản
+                </Link>
+              </li>
+            </ul>
             <hr className="my-4 md:min-w-full" />
             {/* Heading */}
             <h6 className="md:min-w-full text-blueGray-500 text-xs uppercase font-bold block pt-1 pb-4 no-underline">
@@ -255,16 +273,6 @@ export default function Sidebar() {
                   </li>
                 </ul>
               </li>
-
-              <li className="items-center">
-                <Link
-                  className="text-blueGray-700 hover:text-red-600 y-500 text-xs uppercase py-3 font-bold block"
-                  to="/userprofile"
-                >
-                  <i className="fas fa-user-circle text-blueGray-400 mr-2 text-sm"></i>{" "}
-                  Profile Page
-                </Link>
-              </li>
             </ul>
             {/* Footer */}
             <footer className="mt-auto text-center py-4 border-t border-blueGray-200">
@@ -277,7 +285,7 @@ export default function Sidebar() {
                 </Link>{" "}
                 |{" "}
                 <Link to="/privacy" className="hover:text-red-600">
-                  Lê Minh Nhân
+                  Lê Minh Nhân V 1.0
                 </Link>
               </p>
             </footer>
