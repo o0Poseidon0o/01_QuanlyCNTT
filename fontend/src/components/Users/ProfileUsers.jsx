@@ -1,3 +1,4 @@
+// UserProfile.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 
@@ -17,6 +18,52 @@ const UserProfile = () => {
 
   const [departments, setDepartments] = useState([]);
   const [devices, setDevices] = useState([]);
+
+  // ===== Modal đổi mật khẩu (không có mật khẩu hiện tại) =====
+  const [showPwdModal, setShowPwdModal] = useState(false);
+  const [cpNew, setCpNew] = useState("");
+  const [cpConfirm, setCpConfirm] = useState("");
+  const [cpShow, setCpShow] = useState({ nw: false, cf: false });
+  const [cpMsg, setCpMsg] = useState({ type: "", text: "" });
+  const [cpLoading, setCpLoading] = useState(false);
+
+  const validatePassword = (v) => typeof v === "string" && v.trim().length >= 6;
+
+  const handleSubmitChangePassword = async (e) => {
+    e.preventDefault();
+    setCpMsg({ type: "", text: "" });
+
+    if (!userId || !/^\d+$/.test(String(userId))) {
+      setCpMsg({ type: "error", text: "Thiếu hoặc sai ID người dùng." });
+      return;
+    }
+    if (!validatePassword(cpNew)) {
+      setCpMsg({ type: "error", text: "Mật khẩu mới tối thiểu 6 ký tự." });
+      return;
+    }
+    if (cpNew !== cpConfirm) {
+      setCpMsg({ type: "error", text: "Xác nhận mật khẩu không khớp." });
+      return;
+    }
+
+    setCpLoading(true);
+    try {
+      await axios.put(`${API_BASE}/users/update/${userId}`, {
+        password_user: cpNew,
+      });
+      setCpMsg({ type: "success", text: "Cập nhật mật khẩu thành công." });
+      setCpNew("");
+      setCpConfirm("");
+      setTimeout(() => setShowPwdModal(false), 600);
+    } catch (err) {
+      setCpMsg({
+        type: "error",
+        text: err?.response?.data?.message || "Cập nhật mật khẩu thất bại.",
+      });
+    } finally {
+      setCpLoading(false);
+    }
+  };
 
   // ---- Derived
   const avatarUrl = useMemo(() => {
@@ -43,7 +90,7 @@ const UserProfile = () => {
     );
   }, [user, deptMap]);
 
-  // ---- Data fetching (giữ nguyên logic)
+  // ---- Data fetching
   useEffect(() => {
     const fetchUser = async (id) => {
       if (!id) return;
@@ -108,7 +155,7 @@ const UserProfile = () => {
     fetchDevices();
   }, [userId]);
 
-  // ---- ERP action tiles (tối giản, không dùng lib)
+  // ---- ERP action tiles
   const actions = [
     {
       key: "repair",
@@ -142,7 +189,6 @@ const UserProfile = () => {
     },
   ];
 
-  // ---- Empty state khi chưa đăng nhập
   if (!userId) {
     return (
       <div className="min-h-screen bg-neutral-100 flex items-center justify-center p-6">
@@ -157,13 +203,23 @@ const UserProfile = () => {
   return (
     <div className="min-h-screen bg-neutral-100 p-6 mt-10">
       <div className="mx-auto w-full max-w-6xl grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Sidebar: Thông tin cơ bản */}
+        {/* Sidebar */}
         <section className="bg-white border border-neutral-200 rounded-xl">
-          <div className="p-6 border-b border-neutral-200">
+          <div className="p-6 border-b border-neutral-200 flex items-center justify-between">
             <h2 className="text-base font-semibold text-neutral-900">Hồ sơ người dùng</h2>
+            <button
+              type="button"
+              onClick={() => {
+                setCpMsg({ type: "", text: "" });
+                setCpNew(""); setCpConfirm("");
+                setShowPwdModal(true);
+              }}
+              className="text-xs px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+            >
+              Đổi mật khẩu
+            </button>
           </div>
 
-          {/* Loading skeleton for sidebar */}
           {loading ? (
             <div className="p-6 animate-pulse">
               <div className="mx-auto w-28 h-28 rounded-full bg-neutral-200" />
@@ -197,14 +253,12 @@ const UserProfile = () => {
           )}
         </section>
 
-        {/* Main: Thông tin chi tiết + Thiết bị + Chức năng */}
+        {/* Main */}
         <section className="lg:col-span-2 space-y-6">
-          {/* Card: Thông tin chi tiết */}
           <div className="bg-white border border-neutral-200 rounded-xl">
             <div className="p-4 border-b border-neutral-200">
               <h3 className="text-sm font-semibold text-neutral-900">Thông tin chi tiết</h3>
             </div>
-
             {loading ? (
               <div className="p-4 animate-pulse space-y-3">
                 {[...Array(4)].map((_, i) => (
@@ -226,7 +280,6 @@ const UserProfile = () => {
             ) : null}
           </div>
 
-          {/* Card: Thiết bị (bảng gọn) */}
           <div className="bg-white border border-neutral-200 rounded-xl">
             <div className="p-4 border-b border-neutral-200 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-neutral-900">Thiết bị đang sử dụng</h3>
@@ -249,7 +302,6 @@ const UserProfile = () => {
                           <Td className="font-medium text-neutral-800">{d.id_devices}</Td>
                           <Td>{d.name_devices || "—"}</Td>
                           <Td className="hidden md:table-cell text-neutral-500">
-                            {/* chỗ này tuỳ backend của bạn */}
                             {d.DeviceNote || d.note || "—"}
                           </Td>
                         </tr>
@@ -263,7 +315,6 @@ const UserProfile = () => {
             </div>
           </div>
 
-          {/* Card: Chức năng (tiles ERP) */}
           <div className="bg-white border border-neutral-200 rounded-xl">
             <div className="p-4 border-b border-neutral-200">
               <h3 className="text-sm font-semibold text-neutral-900">Chức năng</h3>
@@ -286,11 +337,119 @@ const UserProfile = () => {
           </div>
         </section>
       </div>
+
+      {/* Modal đổi mật khẩu */}
+      {showPwdModal && (
+        <div className="fixed inset-0 z-50">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => !cpLoading && setShowPwdModal(false)}
+          />
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-neutral-200">
+              <div className="p-4 border-b border-neutral-200 flex items-center justify-between">
+                <h4 className="text-sm font-semibold text-neutral-900">Đổi mật khẩu</h4>
+                <button
+                  type="button"
+                  className="text-neutral-500 hover:text-neutral-800"
+                  onClick={() => !cpLoading && setShowPwdModal(false)}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <form onSubmit={handleSubmitChangePassword} className="p-4 space-y-3">
+                <div className="text-xs text-neutral-600">
+                  ID người dùng:{" "}
+                  <span className="font-medium text-neutral-900">{userId}</span>
+                </div>
+
+                {/* Mật khẩu mới */}
+                <div className="flex items-center border-2 py-2 px-3 rounded-xl">
+                  <input
+                    className="pl-2 w-full outline-none border-none"
+                    type={cpShow.nw ? "text" : "password"}
+                    value={cpNew}
+                    onChange={(e) => setCpNew(e.target.value)}
+                    placeholder="Mật khẩu mới (≥ 6 ký tự)"
+                    disabled={cpLoading}
+                    required
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    className="text-xs text-indigo-600 ml-2"
+                    onClick={() => setCpShow((s) => ({ ...s, nw: !s.nw }))}
+                  >
+                    {cpShow.nw ? "Ẩn" : "Hiện"}
+                  </button>
+                </div>
+
+                <PasswordStrength value={cpNew} />
+
+                {/* Xác nhận mật khẩu mới */}
+                <div className="flex items-center border-2 py-2 px-3 rounded-xl">
+                  <input
+                    className="pl-2 w-full outline-none border-none"
+                    type={cpShow.cf ? "text" : "password"}
+                    value={cpConfirm}
+                    onChange={(e) => setCpConfirm(e.target.value)}
+                    placeholder="Xác nhận mật khẩu mới"
+                    disabled={cpLoading}
+                    required
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    className="text-xs text-indigo-600 ml-2"
+                    onClick={() => setCpShow((s) => ({ ...s, cf: !s.cf }))}
+                  >
+                    {cpShow.cf ? "Ẩn" : "Hiện"}
+                  </button>
+                </div>
+
+                {cpMsg.text && (
+                  <div
+                    className={`text-sm rounded px-3 py-2 border ${
+                      cpMsg.type === "error"
+                        ? "bg-red-50 text-red-700 border-red-200"
+                        : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                    }`}
+                  >
+                    {cpMsg.text}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={cpLoading}
+                    onClick={() => setShowPwdModal(false)}
+                    className="px-3 py-2 rounded-lg border border-neutral-200 text-neutral-700 hover:bg-neutral-50"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={cpLoading}
+                    className={`px-4 py-2 rounded-lg text-white font-semibold ${
+                      cpLoading ? "bg-indigo-400" : "bg-indigo-600 hover:bg-indigo-700"
+                    }`}
+                  >
+                    {cpLoading ? "Đang cập nhật..." : "Cập nhật"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* END Modal */}
     </div>
   );
 };
 
-// ---------- Sub components (ERP style) ----------
+// ---------- Sub components ----------
 const Row = ({ label, value }) => (
   <div className="grid grid-cols-12 gap-3 p-3">
     <div className="col-span-4 text-xs uppercase tracking-wide text-neutral-500">{label}</div>
@@ -305,5 +464,29 @@ const Th = ({ children, className = "" }) => (
 const Td = ({ children, className = "" }) => (
   <td className={`px-3 py-2 text-sm text-neutral-800 ${className}`}>{children}</td>
 );
+
+function PasswordStrength({ value }) {
+  const score = [
+    value.length >= 6,
+    /[A-Z]/.test(value),
+    /[a-z]/.test(value),
+    /\d/.test(value),
+    /[^A-Za-z0-9]/.test(value),
+  ].filter(Boolean).length;
+  const label = ["Rất yếu", "Yếu", "Trung bình", "Khá", "Mạnh", "Rất mạnh"][score] || "";
+  const colors = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#16a34a", "#15803d"];
+
+  return (
+    <div className="mb-1">
+      <div className="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
+        <div
+          className="h-1.5 rounded-full transition-all"
+          style={{ width: `${(score / 5) * 100}%`, backgroundColor: colors[score] || "#e5e7eb" }}
+        />
+      </div>
+      <div className="text-[11px] text-gray-500 mt-1">Độ mạnh: {label}</div>
+    </div>
+  );
+}
 
 export default UserProfile;

@@ -44,6 +44,7 @@ app.use('/api/devices',devices)
 //==============================Stastic=======================================
 app.use('/api/stasdevices',stasdevicesRouters)
 app.use('/api/stasusers',stasusersRouters)
+
 sequelize
   .sync()
   .then(() => {

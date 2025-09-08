@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import logo from "../../images/logo/logo_towa.png";
-
+import { Link } from "react-router-dom"; // nhớ import ở đầu file
 
 const API_BASE = "http://localhost:5000/api";
 const LoginPage = () => {
@@ -20,12 +20,12 @@ const LoginPage = () => {
 
     try {
       const res = await axios.post(`${API_BASE}/auth/login`, formData);
-      const { token, role,id_users } = res.data;
+      const { token, role, id_users } = res.data;
 
       // Lưu thông tin đăng nhập vào localStorage
-    localStorage.setItem("token", token);
-    localStorage.setItem("role", role);
-    localStorage.setItem("id_users", id_users); // Lưu id_users
+      localStorage.setItem("token", token);
+      localStorage.setItem("role", role);
+      localStorage.setItem("id_users", id_users); // Lưu id_users
 
       if (role === "admin") {
         navigate("/Welcome");
@@ -46,7 +46,11 @@ const LoginPage = () => {
           alt="Placeholder Image"
           className="object-cover w-full h-full"
         />
-        <img src={logo} alt="" className="z-10 absolute w-1/2 top-0 left-0 m-4 " />
+        <img
+          src={logo}
+          alt=""
+          className="z-10 absolute w-1/2 top-0 left-0 m-4 "
+        />
       </div>
 
       {/* Right: Login Form */}
@@ -61,7 +65,9 @@ const LoginPage = () => {
         <form onSubmit={handleSubmit}>
           {/* ID Users Input */}
           <div className="mb-4">
-            <label htmlFor="id_users" className="block text-gray-600">User ID</label>
+            <label htmlFor="id_users" className="block text-gray-600">
+              User ID
+            </label>
             <input
               type="text"
               id="id_users"
@@ -75,7 +81,9 @@ const LoginPage = () => {
 
           {/* Password Input */}
           <div className="mb-4">
-            <label htmlFor="password_user" className="block text-gray-800">Password</label>
+            <label htmlFor="password_user" className="block text-gray-800">
+              Password
+            </label>
             <input
               type="password"
               id="password_user"
@@ -92,13 +100,25 @@ const LoginPage = () => {
 
           {/* Remember Me Checkbox */}
           <div className="mb-4 flex items-center">
-            <input type="checkbox" id="remember" name="remember" className="text-red-500" />
-            <label htmlFor="remember" className="text-green-900 ml-2">Remember me</label>
+            <input
+              type="checkbox"
+              id="remember"
+              name="remember"
+              className="text-red-500"
+            />
+            <label htmlFor="remember" className="text-green-900 ml-2">
+              Remember me
+            </label>
           </div>
 
           {/* Forgot Password Link */}
-          <div className="mb-6 text-blue-500">
-            <a href="#" className="hover:underline">Bạn quên mật khẩu?</a>
+          <div className="mb-6">
+            <Link
+              to=""
+              className="text-blue-500 hover:underline"
+            >
+              Bạn quên mật khẩu?
+            </Link>
           </div>
 
           {/* Login Button */}

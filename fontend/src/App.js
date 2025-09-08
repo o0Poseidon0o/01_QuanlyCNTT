@@ -6,6 +6,7 @@ import Dashboard from "./views/Admin/AdminDashboard";
 import UserProfile from "./views/Users/Userprofiles";
 import AddUser from "./Layout/Users/AddUserRouter";
 import SettingUser from "./Layout/Users/SettingUserRouter";
+// import Forgotpassword from "./Layout/Users/ForgotpasswordRouter";
 import RoleDepartmentRouter from "./Layout/Department/RoleDepartmentRouter";
 import Department from "./Layout/Department/Department";
 import DataentryRouter from "./Layout/Dataentry/DataentryRouter";
@@ -66,6 +67,14 @@ const App = () => {
             </ProtectedRoute>
           }
         />
+        {/* <Route
+          path="/forgetpassword/*"
+          element={
+            <ProtectedRoute allowedRoles={["user", "manager", "admin"]}>
+              <Forgotpassword />
+            </ProtectedRoute>
+          }
+        /> */}
         <Route
           path="/SettingUser/*"
           element={
