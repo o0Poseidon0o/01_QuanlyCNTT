@@ -65,6 +65,79 @@ const UserProfile = () => {
     }
   };
 
+  // ===== Modal tạo ticket sửa chữa (thêm mới) =====
+  const NEW_TICKET_DEFAULT = {
+    id_devices: "",
+    title: "",
+    issue_description: "",
+    severity: "medium",
+    priority: "normal",
+    sla_hours: 24,
+  };
+  const [showCreateTicket, setShowCreateTicket] = useState(false);
+  const [ntForm, setNtForm] = useState(NEW_TICKET_DEFAULT);
+  const [ntMsg, setNtMsg] = useState({ type: "", text: "" });
+  const [ntLoading, setNtLoading] = useState(false);
+
+  const openCreateTicket = (prefillDeviceId) => {
+    setNtMsg({ type: "", text: "" });
+    setNtForm((f) => ({
+      ...f,
+      id_devices:
+        prefillDeviceId ||
+        devices[0]?.id_devices ||
+        "", // auto chọn thiết bị đầu tiên của user nếu có
+    }));
+    setShowCreateTicket(true);
+  };
+
+  const submitCreateTicket = async (e) => {
+    e?.preventDefault?.();
+    setNtMsg({ type: "", text: "" });
+
+    if (!userId) {
+      setNtMsg({ type: "error", text: "Thiếu ID người dùng." });
+      return;
+    }
+    if (!ntForm.id_devices) {
+      setNtMsg({ type: "error", text: "Vui lòng chọn thiết bị." });
+      return;
+    }
+    if (!String(ntForm.title || "").trim()) {
+      setNtMsg({ type: "error", text: "Vui lòng nhập tiêu đề." });
+      return;
+    }
+
+    setNtLoading(true);
+    try {
+      const payload = {
+        ...ntForm,
+        reported_by: Number(userId), // FK tới tb_users.id_users
+      };
+      // Gọi backend tạo ticket
+      const res = await axios.post(`${API_BASE}/repairs`, payload);
+      const idNew = res?.data?.id_repair;
+
+      setNtMsg({
+        type: "success",
+        text: `Tạo ticket thành công${idNew ? ` (#${idNew})` : ""}.`,
+      });
+
+      // reset form & đóng modal sau 800ms
+      setTimeout(() => {
+        setNtForm(NEW_TICKET_DEFAULT);
+        setShowCreateTicket(false);
+      }, 800);
+    } catch (err) {
+      const msg =
+        err?.response?.data?.message ||
+        "Tạo ticket thất bại. Vui lòng kiểm tra quyền & dữ liệu.";
+      setNtMsg({ type: "error", text: msg });
+    } finally {
+      setNtLoading(false);
+    }
+  };
+
   // ---- Derived
   const avatarUrl = useMemo(() => {
     if (!user?.id_users) return DEFAULT_AVT;
@@ -115,7 +188,9 @@ const UserProfile = () => {
         }
       } catch (e) {
         console.error(e);
-        setError(e?.response?.data?.message || "Lỗi khi tải thông tin người dùng");
+        setError(
+          e?.response?.data?.message || "Lỗi khi tải thông tin người dùng"
+        );
         setUser(null);
       } finally {
         setLoading(false);
@@ -129,7 +204,9 @@ const UserProfile = () => {
     const fetchDepartments = async () => {
       try {
         const res = await axios.get(`${API_BASE}/departments/all-departments`);
-        setDepartments(Array.isArray(res.data) ? res.data : res.data?.departments || []);
+        setDepartments(
+          Array.isArray(res.data) ? res.data : res.data?.departments || []
+        );
       } catch {
         setDepartments([]);
       }
@@ -155,15 +232,21 @@ const UserProfile = () => {
     fetchDevices();
   }, [userId]);
 
-  // ---- ERP action tiles
+  // ---- ERP action tiles (giữ nguyên, thêm nút “Yêu cầu sửa chữa” gọi openCreateTicket)
   const actions = [
     {
       key: "repair",
       label: "Yêu cầu sửa chữa",
-      onClick: () => alert("Đi tới: Yêu cầu sửa chữa thiết bị"),
+      onClick: () => openCreateTicket(), // ← mở modal
       icon: (
         <svg viewBox="0 0 24 24" className="w-5 h-5">
-          <path d="M3 21l6-6m3-3l9-9M9 15l3 3m0-6l-3-3" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
+          <path
+            d="M3 21l6-6m3-3l9-9M9 15l3 3m0-6l-3-3"
+            stroke="currentColor"
+            strokeWidth="2"
+            fill="none"
+            strokeLinecap="round"
+          />
         </svg>
       ),
     },
@@ -173,7 +256,13 @@ const UserProfile = () => {
       onClick: () => alert("Đi tới: Bài kiểm tra nâng bậc"),
       icon: (
         <svg viewBox="0 0 24 24" className="w-5 h-5">
-          <path d="M4 19h16M6 17l6-10 6 10M12 7v10" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
+          <path
+            d="M4 19h16M6 17l6-10 6 10M12 7v10"
+            stroke="currentColor"
+            strokeWidth="2"
+            fill="none"
+            strokeLinecap="round"
+          />
         </svg>
       ),
     },
@@ -183,7 +272,13 @@ const UserProfile = () => {
       onClick: () => alert("Đi tới: Bình chọn"),
       icon: (
         <svg viewBox="0 0 24 24" className="w-5 h-5">
-          <path d="M4 7h16v10H4zM9 12l2 2 4-4" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
+          <path
+            d="M4 7h16v10H4zM9 12l2 2 4-4"
+            stroke="currentColor"
+            strokeWidth="2"
+            fill="none"
+            strokeLinecap="round"
+          />
         </svg>
       ),
     },
@@ -193,8 +288,12 @@ const UserProfile = () => {
     return (
       <div className="min-h-screen bg-neutral-100 flex items-center justify-center p-6">
         <div className="bg-white border border-neutral-200 rounded-xl w-full max-w-xl p-6 text-center">
-          <h1 className="text-xl font-semibold text-neutral-900 mb-2">Hồ sơ người dùng</h1>
-          <p className="text-neutral-600">Vui lòng đăng nhập để xem hồ sơ.</p>
+          <h1 className="text-xl font-semibold text-neutral-900 mb-2">
+            Hồ sơ người dùng
+          </h1>
+          <p className="text-neutral-600">
+            Vui lòng đăng nhập để xem hồ sơ.
+          </p>
         </div>
       </div>
     );
@@ -206,12 +305,15 @@ const UserProfile = () => {
         {/* Sidebar */}
         <section className="bg-white border border-neutral-200 rounded-xl">
           <div className="p-6 border-b border-neutral-200 flex items-center justify-between">
-            <h2 className="text-base font-semibold text-neutral-900">Hồ sơ người dùng</h2>
+            <h2 className="text-base font-semibold text-neutral-900">
+              Hồ sơ người dùng
+            </h2>
             <button
               type="button"
               onClick={() => {
                 setCpMsg({ type: "", text: "" });
-                setCpNew(""); setCpConfirm("");
+                setCpNew("");
+                setCpConfirm("");
                 setShowPwdModal(true);
               }}
               className="text-xs px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50"
@@ -228,7 +330,8 @@ const UserProfile = () => {
               <div className="mt-4 h-3 w-24 bg-neutral-200 rounded mx-auto" />
             </div>
           ) : (
-            !error && user && (
+            !error &&
+            user && (
               <div className="p-6">
                 <div className="flex flex-col items-center">
                   <div className="w-28 h-28 rounded-full overflow-hidden border border-neutral-200">
@@ -241,11 +344,15 @@ const UserProfile = () => {
                     />
                   </div>
                   <div className="mt-4 text-center">
-                    <div className="text-sm font-medium text-neutral-900">{user.username || "—"}</div>
+                    <div className="text-sm font-medium text-neutral-900">
+                      {user.username || "—"}
+                    </div>
                     <div className="text-xs text-neutral-600 mt-0.5">
                       {user.role_name || user?.Role?.name_role || "—"}
                     </div>
-                    <div className="text-[11px] text-neutral-500 mt-2">ID: {user.id_users}</div>
+                    <div className="text-[11px] text-neutral-500 mt-2">
+                      ID: {user.id_users}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -257,7 +364,9 @@ const UserProfile = () => {
         <section className="lg:col-span-2 space-y-6">
           <div className="bg-white border border-neutral-200 rounded-xl">
             <div className="p-4 border-b border-neutral-200">
-              <h3 className="text-sm font-semibold text-neutral-900">Thông tin chi tiết</h3>
+              <h3 className="text-sm font-semibold text-neutral-900">
+                Thông tin chi tiết
+              </h3>
             </div>
             {loading ? (
               <div className="p-4 animate-pulse space-y-3">
@@ -269,7 +378,9 @@ const UserProfile = () => {
                 ))}
               </div>
             ) : error ? (
-              <div className="p-4 text-sm text-red-700 bg-red-50 border-t border-red-200">{error}</div>
+              <div className="p-4 text-sm text-red-700 bg-red-50 border-t border-red-200">
+                {error}
+              </div>
             ) : user ? (
               <div className="divide-y divide-neutral-200">
                 <Row label="Email" value={user.email_user || "—"} />
@@ -282,35 +393,65 @@ const UserProfile = () => {
 
           <div className="bg-white border border-neutral-200 rounded-xl">
             <div className="p-4 border-b border-neutral-200 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-neutral-900">Thiết bị đang sử dụng</h3>
-              <div className="text-xs text-neutral-500">{devices.length} mục</div>
+              <h3 className="text-sm font-semibold text-neutral-900">
+                Thiết bị đang sử dụng
+              </h3>
+              <div className="text-xs text-neutral-500">
+                {devices.length} mục
+              </div>
             </div>
             <div className="p-0">
               {devices.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-neutral-50 text-neutral-600">
-                      <tr>
-                        <Th>ID thiết bị</Th>
-                        <Th>Tên thiết bị</Th>
-                        <Th className="hidden md:table-cell">Ghi chú</Th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-neutral-200">
-                      {devices.map((d) => (
-                        <tr key={d.id_devices} className="hover:bg-neutral-50">
-                          <Td className="font-medium text-neutral-800">{d.id_devices}</Td>
-                          <Td>{d.name_devices || "—"}</Td>
-                          <Td className="hidden md:table-cell text-neutral-500">
-                            {d.DeviceNote || d.note || "—"}
-                          </Td>
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-neutral-50 text-neutral-600">
+                        <tr>
+                          <Th>ID thiết bị</Th>
+                          <Th>Tên thiết bị</Th>
+                          <Th className="hidden md:table-cell">Ghi chú</Th>
+                          <Th className="w-1">Tạo ticket</Th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-200">
+                        {devices.map((d) => (
+                          <tr key={d.id_devices} className="hover:bg-neutral-50">
+                            <Td className="font-medium text-neutral-800">
+                              {d.id_devices}
+                            </Td>
+                            <Td>{d.name_devices || "—"}</Td>
+                            <Td className="hidden md:table-cell text-neutral-500">
+                              {d.DeviceNote || d.note || "—"}
+                            </Td>
+                            <Td>
+                              <button
+                                type="button"
+                                onClick={() => openCreateTicket(d.id_devices)}
+                                className="text-xs px-2 py-1.5 rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                              >
+                                + Ticket
+                              </button>
+                            </Td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="p-4">
+                    <button
+                      type="button"
+                      onClick={() => openCreateTicket()}
+                      className="px-3 py-2 rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50 text-sm"
+                    >
+                      Tạo ticket sửa chữa (chọn thiết bị)
+                    </button>
+                  </div>
+                </>
               ) : (
-                <div className="p-4 text-sm text-neutral-600">Không có thiết bị.</div>
+                <div className="p-4 text-sm text-neutral-600">
+                  Không có thiết bị.
+                </div>
               )}
             </div>
           </div>
@@ -328,8 +469,12 @@ const UserProfile = () => {
                   className="group border border-neutral-200 rounded-lg px-3 py-3 text-left hover:border-neutral-300 focus:outline-none focus:ring-2 focus:ring-neutral-300 transition"
                 >
                   <div className="flex items-center gap-3">
-                    <span className="text-neutral-600 group-hover:text-neutral-800">{a.icon}</span>
-                    <span className="text-sm font-medium text-neutral-800">{a.label}</span>
+                    <span className="text-neutral-600 group-hover:text-neutral-800">
+                      {a.icon}
+                    </span>
+                    <span className="text-sm font-medium text-neutral-800">
+                      {a.label}
+                    </span>
                   </div>
                 </button>
               ))}
@@ -348,7 +493,9 @@ const UserProfile = () => {
           <div className="absolute inset-0 flex items-center justify-center p-4">
             <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-neutral-200">
               <div className="p-4 border-b border-neutral-200 flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-neutral-900">Đổi mật khẩu</h4>
+                <h4 className="text-sm font-semibold text-neutral-900">
+                  Đổi mật khẩu
+                </h4>
                 <button
                   type="button"
                   className="text-neutral-500 hover:text-neutral-800"
@@ -444,7 +591,180 @@ const UserProfile = () => {
           </div>
         </div>
       )}
-      {/* END Modal */}
+      {/* END Modal đổi mật khẩu */}
+
+      {/* Modal tạo ticket sửa chữa */}
+      {showCreateTicket && (
+        <div className="fixed inset-0 z-50">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => !ntLoading && setShowCreateTicket(false)}
+          />
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <form
+              onSubmit={submitCreateTicket}
+              className="w-full max-w-lg bg-white rounded-xl shadow-2xl border border-neutral-200 overflow-hidden"
+            >
+              <div className="p-4 border-b border-neutral-200 flex items-center justify-between">
+                <h4 className="text-sm font-semibold text-neutral-900">
+                  Tạo yêu cầu sửa chữa
+                </h4>
+                <button
+                  type="button"
+                  className="text-neutral-500 hover:text-neutral-800"
+                  onClick={() => !ntLoading && setShowCreateTicket(false)}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="p-4 space-y-3">
+                {/* Thiết bị */}
+                <div>
+                  <div className="text-xs text-neutral-600 mb-1">Thiết bị</div>
+                  <select
+                    className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
+                    value={ntForm.id_devices}
+                    onChange={(e) =>
+                      setNtForm({ ...ntForm, id_devices: e.target.value })
+                    }
+                    disabled={ntLoading}
+                    required
+                  >
+                    <option value="">-- Chọn thiết bị --</option>
+                    {devices.map((d) => (
+                      <option key={d.id_devices} value={d.id_devices}>
+                        {d.id_devices} — {d.name_devices || "Thiết bị"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Tiêu đề */}
+                <div>
+                  <div className="text-xs text-neutral-600 mb-1">Tiêu đề</div>
+                  <input
+                    className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
+                    placeholder="VD: Laptop không khởi động"
+                    value={ntForm.title}
+                    onChange={(e) =>
+                      setNtForm({ ...ntForm, title: e.target.value })
+                    }
+                    disabled={ntLoading}
+                    required
+                  />
+                </div>
+
+                {/* Mô tả */}
+                <div>
+                  <div className="text-xs text-neutral-600 mb-1">Mô tả</div>
+                  <textarea
+                    rows={4}
+                    className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
+                    placeholder="Triệu chứng, khi nào xảy ra, đã thử gì…"
+                    value={ntForm.issue_description}
+                    onChange={(e) =>
+                      setNtForm({
+                        ...ntForm,
+                        issue_description: e.target.value,
+                      })
+                    }
+                    disabled={ntLoading}
+                  />
+                </div>
+
+                {/* Mức độ + Priority */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-xs text-neutral-600 mb-1">Mức độ</div>
+                    <select
+                      className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
+                      value={ntForm.severity}
+                      onChange={(e) =>
+                        setNtForm({ ...ntForm, severity: e.target.value })
+                      }
+                      disabled={ntLoading}
+                    >
+                      <option value="critical">Critical</option>
+                      <option value="high">High</option>
+                      <option value="medium">Medium</option>
+                      <option value="low">Low</option>
+                    </select>
+                  </div>
+                  <div>
+                    <div className="text-xs text-neutral-600 mb-1">Priority</div>
+                    <select
+                      className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
+                      value={ntForm.priority}
+                      onChange={(e) =>
+                        setNtForm({ ...ntForm, priority: e.target.value })
+                      }
+                      disabled={ntLoading}
+                    >
+                      <option value="urgent">Urgent</option>
+                      <option value="high">High</option>
+                      <option value="normal">Normal</option>
+                      <option value="low">Low</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* SLA */}
+                <div>
+                  <div className="text-xs text-neutral-600 mb-1">SLA (giờ)</div>
+                  <input
+                    type="number"
+                    min={1}
+                    className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
+                    value={ntForm.sla_hours}
+                    onChange={(e) =>
+                      setNtForm({
+                        ...ntForm,
+                        sla_hours: Number(e.target.value),
+                      })
+                    }
+                    disabled={ntLoading}
+                  />
+                </div>
+
+                {/* Message */}
+                {ntMsg.text && (
+                  <div
+                    className={`text-sm rounded px-3 py-2 border ${
+                      ntMsg.type === "error"
+                        ? "bg-red-50 text-red-700 border-red-200"
+                        : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                    }`}
+                  >
+                    {ntMsg.text}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 border-t border-neutral-200 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={ntLoading}
+                  onClick={() => setShowCreateTicket(false)}
+                  className="px-3 py-2 rounded-lg border border-neutral-200 text-neutral-700 hover:bg-neutral-50"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={ntLoading}
+                  className={`px-4 py-2 rounded-lg text-white font-semibold ${
+                    ntLoading ? "bg-indigo-400" : "bg-indigo-600 hover:bg-indigo-700"
+                  }`}
+                >
+                  {ntLoading ? "Đang tạo..." : "Tạo ticket"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* END Modal tạo ticket */}
     </div>
   );
 };
@@ -452,13 +772,19 @@ const UserProfile = () => {
 // ---------- Sub components ----------
 const Row = ({ label, value }) => (
   <div className="grid grid-cols-12 gap-3 p-3">
-    <div className="col-span-4 text-xs uppercase tracking-wide text-neutral-500">{label}</div>
+    <div className="col-span-4 text-xs uppercase tracking-wide text-neutral-500">
+      {label}
+    </div>
     <div className="col-span-8 text-sm text-neutral-900">{value}</div>
   </div>
 );
 
 const Th = ({ children, className = "" }) => (
-  <th className={`text-left text-xs font-medium uppercase tracking-wide px-3 py-2 ${className}`}>{children}</th>
+  <th
+    className={`text-left text-xs font-medium uppercase tracking-wide px-3 py-2 ${className}`}
+  >
+    {children}
+  </th>
 );
 
 const Td = ({ children, className = "" }) => (

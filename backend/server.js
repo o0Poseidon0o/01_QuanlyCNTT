@@ -17,6 +17,8 @@ const devices=require('./src/routes/Technologyequipment/devicesRouters')
 // ============================Stastic=======================================
 const stasdevicesRouters = require('./src/routes/Technologyequipment/stasDevices/stasdevicesRouters');
 const stasusersRouters = require('./src/routes/Technologyequipment/stasDevices/stasdevicesRouters');
+// =============================Repair======================================
+const repairRoutes = require('./src/routes/repairTech/repairRoutes');
 
 require('dotenv').config();
 const app = express();
@@ -44,6 +46,8 @@ app.use('/api/devices',devices)
 //==============================Stastic=======================================
 app.use('/api/stasdevices',stasdevicesRouters)
 app.use('/api/stasusers',stasusersRouters)
+// ==============================Repair======================================
+app.use('/api/repairs',repairRoutes)
 
 sequelize
   .sync()

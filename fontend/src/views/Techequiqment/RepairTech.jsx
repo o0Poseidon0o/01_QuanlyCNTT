@@ -1,7 +1,7 @@
 import React from "react";
 import Sidebar from "../../components/Sidebar/Sidebar";
 import AdminNavbar from "../../components/Navabar/AdminNavbar";
-import RepairHistory from "../../components/Technologyequipment/RepairHistory";
+import RepairManagementUI from "../../components/RepairTech/RepairManagementUI";
 
 
 
@@ -13,7 +13,7 @@ const Repairhistorylist = () => {
       <div className="relative md:ml-64 bg-slate-100">
         <AdminNavbar />
         <div className="px-4 md:px-10 mx-auto w-full m-20 absolute">
-          <RepairHistory/>
+          <RepairManagementUI/>
         </div>
       </div>
     </>

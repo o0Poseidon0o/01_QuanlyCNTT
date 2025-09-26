@@ -16,7 +16,8 @@ import Unauthorized from "./views/Unauthorzed/Unauthorized"; // Trang báo lỗi
 import WelcomePage from "./views/Welcome/WelcomePage";
 import DocumentManagement from "./views/Documents/DocumentsManagerment"
 import Techenologyquipment from "./views/Techequiqment/Techequiqment";
-import Repairhistorylist from "./views/Techequiqment/Repairhistory";
+// import Repairhistorylist from "./views/Techequiqment/Repairhistory";
+import RepairTech from "./views/Techequiqment/RepairTech";
 import Staticsequipments from "./views/Techequiqment/Staticsequipment";
 
 const App = () => {
@@ -135,7 +136,7 @@ const App = () => {
           path="/Repairhistory"
           element={
             <ProtectedRoute allowedRoles={["admin", "manager","user"]}>
-              <Repairhistorylist/>
+              <RepairTech/>
             </ProtectedRoute>
           }
         />
