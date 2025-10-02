@@ -450,41 +450,102 @@ const createRequest = async (req, res) => {
 };
 
 /** PATCH /api/repairs/:id/status */
+// PATCH /api/repairs/:id/status
 const updateStatus = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const id = Number(req.params.id);
-    const { actor_user, new_status, note } = req.body;
+    const { new_status, note } = req.body || {};
 
+    if (!Number.isInteger(id) || id <= 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "Invalid id_repair" });
+    }
+
+    // 1) Lấy ticket & khoá record
     const r = await RepairRequest.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
-    if (!r) return res.status(404).json({ message: "Not found" });
+    if (!r) {
+      await t.rollback();
+      return res.status(404).json({ message: "Not found" });
+    }
 
+    // 2) Lấy detail để thử lấy technician_user
+    const detail = await RepairDetail.findOne({
+      where: { id_repair: id },
+      transaction: t,
+    });
+
+    // 3) Resolve status theo map hiện có (giữ nguyên cách bạn đang dùng)
     const old_status = r.status;
-    const resolvedStatus = ensureEnum(new_status, STATUS_MAP, old_status);
+    const resolvedStatus = ensureEnum(new_status, STATUS_MAP, old_status) || old_status;
+
     r.status = resolvedStatus;
     r.last_updated = new Date();
     await r.save({ transaction: t });
 
-    await RepairHistory.create(
-      {
-        id_repair: id,
-        actor_user,
-        old_status,
-        new_status: resolvedStatus,
-        note: note || null,
-        created_at: new Date(),
-      },
-      { transaction: t }
-    );
+    // 4) Chọn actor_user HỢP LỆ bằng id_users trong tb_users
+    const toInt = (v) => {
+      const n = Number(v);
+      return Number.isInteger(n) && n > 0 ? n : null;
+    };
+
+    const findExistingUserId = async (userId) => {
+      const v = toInt(userId);
+      if (!v) return null;
+      const u = await User.findOne({
+        where: { id_users: v },
+        attributes: ["id_users"],
+        transaction: t,
+      });
+      return u ? v : null;
+    };
+
+    // danh sách ứng viên theo thứ tự ưu tiên
+    const candidates = [
+      req.body?.actor_user,            // nếu FE còn gửi, chỉ dùng khi tồn tại thật
+      detail?.technician_user,         // kỹ thuật viên gán trong chi tiết
+      detail?.technician_id,           // nếu bạn đặt tên cột khác
+      r.reported_by,                   // người báo cáo
+      r.approved_by,                   // người duyệt (nếu có)
+    ].filter((x) => x != null);
+
+    let actorId = null;
+    for (const c of candidates) {
+      actorId = await findExistingUserId(c);
+      if (actorId) break;
+    }
+
+    // fallback: lấy 1 user bất kỳ (đầu bảng) nếu vẫn chưa có
+    if (!actorId) {
+      const any = await User.findOne({
+        attributes: ["id_users"],
+        order: [["id_users", "ASC"]],
+        transaction: t,
+      });
+      actorId = any?.id_users ?? null;
+    }
+
+    // 5) Tạo history (chỉ set actor_user khi có id hợp lệ)
+    const historyPayload = {
+      id_repair: id,
+      old_status,
+      new_status: resolvedStatus,
+      note: note || null,
+      created_at: new Date(),
+    };
+    if (actorId) historyPayload.actor_user = actorId; // nếu cột cho phép NULL, có thể bỏ qua
+
+    await RepairHistory.create(historyPayload, { transaction: t });
 
     await t.commit();
-    res.json({ ok: true });
+    return res.json({ ok: true, actor_user: actorId ?? null });
   } catch (e) {
     await t.rollback();
-    console.error(e);
-    res.status(500).json({ message: "Server error" });
+    console.error("updateStatus error:", e);
+    return res.status(500).json({ message: "Server error", error: e?.message });
   }
 };
+
 
 /** PUT /api/repairs/:id/detail (upsert) */
 const upsertDetail = async (req, res) => {

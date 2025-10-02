@@ -19,12 +19,10 @@ import { Skeleton } from "../ui/skeleton";
 
 import KPI from "./KPI";
 import TicketSheet from "./TicketSheet";
-import STATUS_META, { resolveStatusMeta } from "./statusMeta";
+// ⚠️ chỉ lấy resolveStatusMeta để tránh unused import
+import { resolveStatusMeta } from "./statusMeta";
 import { listRepairs, getSummaryStats } from "../../services/repairsApi";
-import { STATUS_MAP, SEVERITY_OPTIONS, PRIORITY_OPTIONS, STATUS_OPTIONS } from "../../constants/repairEnums";
-
-
-
+import { STATUS_MAP, SEVERITY_OPTIONS, STATUS_OPTIONS } from "../../constants/repairEnums";
 
 // ---------- helpers ----------
 const formatDate = (dt) => (dt ? new Date(dt).toLocaleString() : "-");
@@ -237,22 +235,22 @@ export default function RepairManagementUI() {
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </div>
+
+              {/* ✅ map đúng STATUS_OPTIONS dạng {value,label} */}
               <Select value={status} onValueChange={setStatus}>
                 <SelectTrigger>
                   <SelectValue placeholder="Trạng thái" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Tất cả trạng thái</SelectItem>
-                  {STATUS_OPTIONS.map((key) => {
-                    const meta = resolveStatusMeta(key);
-                    return (
-                      <SelectItem key={key} value={key}>
-                        {meta.label}
-                      </SelectItem>
-                    );
-                  })}
+                  {STATUS_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
+
               <Select value={severity} onValueChange={setSeverity}>
                 <SelectTrigger>
                   <SelectValue placeholder="Mức độ" />
@@ -395,7 +393,8 @@ export default function RepairManagementUI() {
                   {loading &&
                     Array.from({ length: 6 }).map((_, i) => (
                       <tr key={i}>
-                        <td colSpan={11} className="py-3">
+                        {/* ✅ khớp đúng 12 cột */}
+                        <td colSpan={12} className="py-3">
                           <Skeleton className="h-6 w-full" />
                         </td>
                       </tr>
@@ -405,51 +404,55 @@ export default function RepairManagementUI() {
                       const statusMeta = resolveStatusMeta(t.status, t.status_label);
                       return (
                         <tr key={t.id_repair} className="border-b hover:bg-slate-50/70 dark:hover:bg-slate-800/30">
-                        <td className="py-3 pr-3 font-medium">#{t.id_repair}</td>
-                        <td className="py-3 pr-3">
-                          <div className="font-medium">{t.device_name}</div>
-                          <div className="text-xs text-slate-500">{t.device_code || "-"}</div>
-                        </td>
-                        <td className="py-3 pr-3">
-                          <div className="font-medium line-clamp-1 flex items-center gap-1">
-                            {t.title}
-                            <button
-                              type="button"
-                              className="text-slate-400 hover:text-slate-700"
-                              title="Open details"
-                              onClick={() => setSelected(t)}
-                            >
-                              <ArrowTopRightOnSquareIcon className="h-4 w-4" />
-                            </button>
-                          </div>
-                          <div className="text-xs text-slate-500 line-clamp-1">{t.issue_description}</div>
-                        </td>
-                        <td className="py-3 pr-3 capitalize">{t.severity_label || t.severity}</td>
-                        <td className="py-3 pr-3 capitalize">{t.priority_label || t.priority}</td>
-                        <td className="py-3 pr-3">
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${STATUS_MAP[t.status]?.color || "bg-slate-200"}`}>
-                            {STATUS_MAP[t.status]?.label || t.status_label || t.status}
-                          </span>
-                        </td>
-                        <td className="py-3 pr-3">{t.reporter_name || "-"}</td>
-                        <td className="py-3 pr-3 text-slate-500">{formatDate(t.date_reported)}</td>
-                        <td className="py-3 pr-3">{t.sla_hours || "-"}</td>
-                        <td className="py-3 pr-3">
-                          <div className="text-sm">{t.assignee || t.vendor_name || "-"}</div>
-                          <div className="text-xs text-slate-500">{t.repair_type === "vendor" ? "Vendor" : "In-house"}</div>
-                        </td>
-                        <td className="py-3 pr-3">{formatMoney(t.total_cost)}</td>
-                        <td className="py-3 pr-3">
-                          <Button size="sm" variant="outline" onClick={() => setSelected(t)}>
-                            Chi tiết
-                          </Button>
-                        </td>
+                          <td className="py-3 pr-3 font-medium">#{t.id_repair}</td>
+                          <td className="py-3 pr-3">
+                            <div className="font-medium">{t.device_name}</div>
+                            <div className="text-xs text-slate-500">{t.device_code || "-"}</div>
+                          </td>
+                          <td className="py-3 pr-3">
+                            <div className="font-medium line-clamp-1 flex items-center gap-1">
+                              {t.title}
+                              <button
+                                type="button"
+                                className="text-slate-400 hover:text-slate-700"
+                                title="Open details"
+                                onClick={() => setSelected(t)}
+                              >
+                                <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+                              </button>
+                            </div>
+                            <div className="text-xs text-slate-500 line-clamp-1">{t.issue_description}</div>
+                          </td>
+                          <td className="py-3 pr-3 capitalize">{t.severity_label || t.severity}</td>
+                          <td className="py-3 pr-3 capitalize">{t.priority_label || t.priority}</td>
+                          <td className="py-3 pr-3">
+                            {/* ✅ dùng .cls thay vì .color */}
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${STATUS_MAP[t.status]?.cls || "bg-slate-200"}`}>
+                              {STATUS_MAP[t.status]?.label || t.status_label || t.status}
+                            </span>
+                          </td>
+                          <td className="py-3 pr-3">{t.reporter_name || "-"}</td>
+                          <td className="py-3 pr-3 text-slate-500">{formatDate(t.date_reported)}</td>
+                          <td className="py-3 pr-3">{t.sla_hours || "-"}</td>
+                          <td className="py-3 pr-3">
+                            <div className="text-sm">{t.assignee || t.vendor_name || "-"}</div>
+                            <div className="text-xs text-slate-500">
+                              {t.repair_type === "vendor" ? "Vendor" : "In-house"}
+                            </div>
+                          </td>
+                          <td className="py-3 pr-3">{formatMoney(t.total_cost)}</td>
+                          <td className="py-3 pr-3">
+                            <Button size="sm" variant="outline" onClick={() => setSelected(t)}>
+                              Chi tiết
+                            </Button>
+                          </td>
                         </tr>
                       );
                     })}
                   {!loading && tickets.length === 0 && (
                     <tr>
-                      <td colSpan={11} className="py-3 text-slate-500">
+                      {/* ✅ khớp đúng 12 cột */}
+                      <td colSpan={12} className="py-3 text-slate-500">
                         Không có dữ liệu
                       </td>
                     </tr>
@@ -477,3 +480,4 @@ export default function RepairManagementUI() {
     </div>
   );
 }
+

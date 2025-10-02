@@ -48,7 +48,7 @@ function Actions({ ticket, onChanged, onRefresh }) {
     if (!ticket?.id_repair) return;
     setBusy(true);
     try {
-      await updateStatus(ticket.id_repair, { actor_user: 1, new_status: "completed", note: "Hoàn tất" });
+      await updateStatus(ticket.id_repair, { new_status: "completed", note: "Hoàn tất" });
       setIsCompleted(true); // cập nhật UI ngay
       onRefresh?.();
       onChanged?.();

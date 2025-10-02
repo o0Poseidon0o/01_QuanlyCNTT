@@ -1,4 +1,9 @@
 <<<<<<< ours
+<<<<<<< ours
+=======
+const RepairRequest = require("../models/RepairTech/repairRequest");
+
+>>>>>>> theirs
 =======
 const RepairRequest = require("../models/RepairTech/repairRequest");
 
@@ -11,6 +16,7 @@ const canonicalKey = (value) =>
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
 
+<<<<<<< ours
 <<<<<<< ours
 const createEnumDictionary = (items, defaultKey) => {
   const keyByCanonical = new Map();
@@ -33,6 +39,8 @@ const createEnumDictionary = (items, defaultKey) => {
     if (!resolvedKey) return null;
     return labelByKey.get(resolvedKey) || null;
 =======
+=======
+>>>>>>> theirs
 const findEnumValue = (enumValues = [], candidates = []) => {
   const candidateSet = new Set((candidates || []).map((item) => canonicalKey(item)));
   for (const value of enumValues) {
@@ -101,6 +109,9 @@ const createEnumDictionary = (enumValues = [], definitions = [], requestedDefaul
     const key = resolveKey(value) || fallbackKey;
     if (!key) return null;
     return labelByKey.get(key) || null;
+<<<<<<< ours
+>>>>>>> theirs
+=======
 >>>>>>> theirs
   };
 
@@ -110,6 +121,10 @@ const createEnumDictionary = (enumValues = [], definitions = [], requestedDefaul
 
   const getKeys = () => Array.from(labelByKey.keys());
 <<<<<<< ours
+<<<<<<< ours
+=======
+  const getValues = () => Array.from(labelByKey.values());
+>>>>>>> theirs
 =======
   const getValues = () => Array.from(labelByKey.values());
 >>>>>>> theirs
@@ -121,6 +136,7 @@ const createEnumDictionary = (enumValues = [], definitions = [], requestedDefaul
     toCanonical,
     getLabel,
     getKeys,
+<<<<<<< ours
 <<<<<<< ours
   };
 };
@@ -171,6 +187,8 @@ const formatTicketEnums = (row = {}) => {
     priority: priorityKey,
     priority_label: PRIORITY_DICT.getLabel(priorityKey, row.priority),
 =======
+=======
+>>>>>>> theirs
     getValues,
   };
 };
@@ -226,11 +244,15 @@ const formatTicketEnums = (row = {}) => {
     priority_raw: priorityValue,
     priority: priorityKey,
     priority_label: PRIORITY_DICT.getLabel(priorityKey, priorityValue),
+<<<<<<< ours
+>>>>>>> theirs
+=======
 >>>>>>> theirs
   };
 };
 
 const formatHistoryEnums = (historyRow = {}) => {
+<<<<<<< ours
 <<<<<<< ours
   const oldStatusKey = STATUS_DICT.toCanonical(historyRow.old_status, historyRow.old_status);
   const newStatusKey = STATUS_DICT.toCanonical(historyRow.new_status, historyRow.new_status);
@@ -242,6 +264,8 @@ const formatHistoryEnums = (historyRow = {}) => {
     new_status: newStatusKey,
     new_status_label: STATUS_DICT.getLabel(newStatusKey, historyRow.new_status),
 =======
+=======
+>>>>>>> theirs
   const oldValue = historyRow.old_status;
   const newValue = historyRow.new_status;
   const oldStatusKey = STATUS_DICT.toCanonical(oldValue, oldValue);
@@ -255,6 +279,9 @@ const formatHistoryEnums = (historyRow = {}) => {
     new_status_raw: newValue,
     new_status: newStatusKey,
     new_status_label: STATUS_DICT.getLabel(newStatusKey, newValue),
+<<<<<<< ours
+>>>>>>> theirs
+=======
 >>>>>>> theirs
   };
 };
