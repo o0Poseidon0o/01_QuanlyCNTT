@@ -12,6 +12,63 @@ const User = require("../../models/Users/User");
 const RepairVendor = require("../../models/RepairTech/repairVendor");
 const { get } = require("../../routes/repairTech/repairRoutes");
 
+const normalizeKey = (value) =>
+  String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+const STATUS_MAP = new Map([
+  ["duoc_yeu_cau", "Được yêu cầu"],
+  ["requested", "Được yêu cầu"],
+  ["approved", "Đã duyệt"],
+  ["da_duyet", "Đã duyệt"],
+  ["dang_xu_ly", "Đang xử lý"],
+  ["in_progress", "Đang xử lý"],
+  ["cho_linh_kien", "Chờ linh kiện"],
+  ["pending_parts", "Chờ linh kiện"],
+  ["hoan_tat", "Hoàn tất"],
+  ["completed", "Hoàn tất"],
+  ["huy", "Huỷ"],
+  ["huy_bo", "Huỷ"],
+  ["canceled", "Huỷ"],
+  ["cancelled", "Huỷ"],
+]);
+
+const SEVERITY_MAP = new Map([
+  ["thap", "Thấp"],
+  ["low", "Thấp"],
+  ["trung_binh", "Trung bình"],
+  ["medium", "Trung bình"],
+  ["cao", "Cao"],
+  ["high", "Cao"],
+  ["khan", "Khẩn"],
+  ["khan_cap", "Khẩn"],
+  ["critical", "Khẩn"],
+]);
+
+const PRIORITY_MAP = new Map([
+  ["thap", "Thấp"],
+  ["low", "Thấp"],
+  ["binh_thuong", "Bình thường"],
+  ["binhthuong", "Bình thường"],
+  ["normal", "Bình thường"],
+  ["cao", "Cao"],
+  ["high", "Cao"],
+  ["urgent", "Cao"],
+]);
+
+const ensureEnum = (value, dictionary, fallback = undefined) => {
+  if (value == null || value === "") return fallback;
+  const normalized = normalizeKey(value);
+  if (dictionary.has(normalized)) {
+    return dictionary.get(normalized);
+  }
+  return fallback;
+};
+
 function toVND(n) { return Number(n || 0); }
 
 const listRepairs = async (req, res) => {
@@ -25,10 +82,12 @@ const listRepairs = async (req, res) => {
       where.status = { [Op.ne]: "canceled" };
     }
     if (status && status !== "all") {
-      where.status = status;
+      const resolvedStatus = ensureEnum(status, STATUS_MAP);
+      if (resolvedStatus) where.status = resolvedStatus;
     }
     if (severity && severity !== "all") {
-      where.severity = severity;
+      const resolvedSeverity = ensureEnum(severity, SEVERITY_MAP);
+      if (resolvedSeverity) where.severity = resolvedSeverity;
     }
     if (q) {
       where[Op.or] = [
@@ -171,18 +230,43 @@ const createRequest = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const {
-      id_devices, reported_by, title, issue_description,
-      severity = "medium", priority = "normal", sla_hours = null, date_down = null, expected_date = null
+      id_devices,
+      reported_by,
+      title,
+      issue_description,
+      severity = "medium",
+      priority = "normal",
+      sla_hours = null,
+      date_down = null,
+      expected_date = null,
     } = req.body;
 
+    const resolvedSeverity = ensureEnum(severity, SEVERITY_MAP, "Trung bình");
+    const resolvedPriority = ensureEnum(priority, PRIORITY_MAP, "Bình thường");
+    const resolvedStatus = ensureEnum("requested", STATUS_MAP, "Được yêu cầu");
+
     const r = await RepairRequest.create({
-      id_devices, reported_by, title, issue_description, severity, priority,
-      status: "requested", date_reported: new Date(), sla_hours, date_down, expected_date, last_updated: new Date(),
+      id_devices,
+      reported_by,
+      title,
+      issue_description,
+      severity: resolvedSeverity,
+      priority: resolvedPriority,
+      status: resolvedStatus,
+      date_reported: new Date(),
+      sla_hours,
+      date_down,
+      expected_date,
+      last_updated: new Date(),
     }, { transaction: t });
 
     await RepairHistory.create({
-      id_repair: r.id_repair, actor_user: reported_by, old_status: null, new_status: "requested",
-      note: "Created ticket", created_at: new Date(),
+      id_repair: r.id_repair,
+      actor_user: reported_by,
+      old_status: null,
+      new_status: resolvedStatus,
+      note: "Created ticket",
+      created_at: new Date(),
     }, { transaction: t });
 
     await t.commit();
@@ -204,12 +288,18 @@ const updateStatus = async (req, res) => {
     if (!r) return res.status(404).json({ message: "Not found" });
 
     const old_status = r.status;
-    r.status = new_status;
+    const resolvedStatus = ensureEnum(new_status, STATUS_MAP, old_status);
+    r.status = resolvedStatus;
     r.last_updated = new Date();
     await r.save({ transaction: t });
 
     await RepairHistory.create({
-      id_repair: id, actor_user, old_status, new_status, note: note || null, created_at: new Date(),
+      id_repair: id,
+      actor_user,
+      old_status,
+      new_status: resolvedStatus,
+      note: note || null,
+      created_at: new Date(),
     }, { transaction: t });
 
     await t.commit();
