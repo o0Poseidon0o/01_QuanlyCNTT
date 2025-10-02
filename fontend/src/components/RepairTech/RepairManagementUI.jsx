@@ -21,7 +21,8 @@ import KPI from "./KPI";
 import TicketSheet from "./TicketSheet";
 import STATUS_META, { resolveStatusMeta } from "./statusMeta";
 import { listRepairs, getSummaryStats } from "../../services/repairsApi";
-import { STATUS_MAP } from "../../constants/repairEnums";
+import { STATUS_MAP, SEVERITY_OPTIONS, PRIORITY_OPTIONS, STATUS_OPTIONS } from "../../constants/repairEnums";
+
 
 
 
@@ -80,7 +81,6 @@ const cleanTickets = (arr = []) => {
     });
 };
 // -----------------------------
-const STATUS_OPTIONS = Object.keys(STATUS_META);
 
 export default function RepairManagementUI() {
   // filters
@@ -259,10 +259,11 @@ export default function RepairManagementUI() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Tất cả mức độ</SelectItem>
-                  <SelectItem value="critical">Critical</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="low">Low</SelectItem>
+                  {SEVERITY_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

@@ -1,14 +1,11 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { DocumentTextIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
+import { DocumentTextIcon, ChevronRightIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../ui/tabs";
 import { Card, CardHeader, CardTitle, CardContent } from "../ui/card";
 import { Skeleton } from "../ui/skeleton";
 import { getRepair, updateStatus, uploadFiles } from "../../services/repairsApi";
 import { STATUS_MAP } from "../../constants/repairEnums";
-
-
-
 
 const fmtDate = (x) => (x ? new Date(x).toLocaleString() : "-");
 const fmtVND = (n) =>
@@ -39,11 +36,20 @@ function InfoRow({ label, value }) {
 
 function Actions({ ticket, onChanged, onRefresh }) {
   const [busy, setBusy] = useState(false);
+  // ✅ thêm state để fix 'isCompleted is not defined'
+  const [isCompleted, setIsCompleted] = useState(() => ticket?.status === "completed");
+
+  useEffect(() => {
+    // đồng bộ khi mở ticket khác
+    setIsCompleted(ticket?.status === "completed");
+  }, [ticket?.status]);
 
   const markCompleted = async () => {
+    if (!ticket?.id_repair) return;
     setBusy(true);
     try {
       await updateStatus(ticket.id_repair, { actor_user: 1, new_status: "completed", note: "Hoàn tất" });
+      setIsCompleted(true); // cập nhật UI ngay
       onRefresh?.();
       onChanged?.();
     } catch (e) {
@@ -75,15 +81,19 @@ function Actions({ ticket, onChanged, onRefresh }) {
     <div className="flex gap-2 mt-3">
       <button
         className="px-3 py-1 rounded bg-emerald-600 text-white disabled:opacity-50"
-        disabled={busy}
+        disabled={busy || isCompleted}
         onClick={markCompleted}
       >
-        Đánh dấu hoàn tất
+        {isCompleted ? "Đã hoàn tất" : "Đánh dấu hoàn tất"}
       </button>
-      <label className="px-3 py-1 rounded bg-slate-200 text-slate-800 cursor-pointer">
-        Tải file
-        <input type="file" className="hidden" multiple onChange={onUpload} />
-      </label>
+      {/* Nếu bạn muốn bỏ upload UI hẳn, có thể comment label bên dưới.
+          Mình giữ nguyên function onUpload theo yêu cầu "giữ nguyên code". */}
+      {false && (
+        <label className="px-3 py-1 rounded bg-slate-200 text-slate-800 cursor-pointer">
+          Tải file
+          <input type="file" className="hidden" multiple onChange={onUpload} />
+        </label>
+      )}
     </div>
   );
 }
@@ -157,7 +167,7 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
         }
       }
     },
-    [],
+    []
   );
 
   useEffect(() => {
@@ -184,10 +194,18 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
   return (
     <Sheet open={!!ticket} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full sm:max-w-xl">
-        <SheetHeader>
+        <SheetHeader className="flex items-center justify-between">
           <SheetTitle className="flex items-center gap-2">
             <DocumentTextIcon className="h-5 w-5" /> Ticket #{ticket?.id_repair ?? "-"}
           </SheetTitle>
+          <button
+            type="button"
+            onClick={() => onOpenChange?.(false)}
+            className="inline-flex items-center justify-center rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+            aria-label="Đóng"
+          >
+            <XMarkIcon className="h-5 w-5" />
+          </button>
         </SheetHeader>
 
         {!ticket ? (
@@ -228,12 +246,19 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
                         label="Thiết bị"
                         value={`${view.device_name || "-"}${view.device_code ? ` (${view.device_code})` : ""}`}
                       />
-                      <InfoRow label="Severity" value={<SeverityBadge sev={view.severity} label={view.severity_label} />} />
+                      <InfoRow
+                        label="Severity"
+                        value={<SeverityBadge sev={view.severity} label={view.severity_label} />}
+                      />
                       <InfoRow label="Priority" value={view.priority_label || view.priority || "-"} />
                       <InfoRow
                         label="Trạng thái"
                         value={
-                          <span className={`px-2 py-1 rounded-full text-xs ${STATUS_MAP[view.status]?.cls || "bg-slate-200"}`}>
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs ${
+                              STATUS_MAP[view.status]?.cls || "bg-slate-200"
+                            }`}
+                          >
                             {STATUS_MAP[view.status]?.label || view.status_label || view.status || "-"}
                           </span>
                         }
@@ -285,14 +310,15 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
                               <span className="text-xs text-slate-400">{fmtDate(h.created_at)}</span>
                             </div>
                             <div className="text-slate-600">
-                              {h.note || `${h.old_status_label || h.old_status || ""} → ${h.new_status_label || h.new_status || ""}`}
+                              {h.note ||
+                                `${h.old_status_label || h.old_status || ""} → ${
+                                  h.new_status_label || h.new_status || ""
+                                }`}
                             </div>
                           </div>
                         </li>
                       ))}
-                      {!timeline.length && (
-                        <div className="text-sm text-slate-500">Chưa có lịch sử</div>
-                      )}
+                      {!timeline.length && <div className="text-sm text-slate-500">Chưa có lịch sử</div>}
                     </ul>
                   </CardContent>
                 </Card>
@@ -327,7 +353,9 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
                         ))}
                         {!parts.length && (
                           <tr>
-                            <td colSpan={5} className="py-2 text-slate-500">Không có phụ tùng</td>
+                            <td colSpan={5} className="py-2 text-slate-500">
+                              Không có phụ tùng
+                            </td>
                           </tr>
                         )}
                       </tbody>

@@ -594,7 +594,6 @@ const getSummaryStatsSafe = async (req, res) => {
     return res.status(500).json({ message: "Summary error", error: e?.message || String(e) });
   }
 };
-
 module.exports = {
   listRepairs,
   updateStatus,
