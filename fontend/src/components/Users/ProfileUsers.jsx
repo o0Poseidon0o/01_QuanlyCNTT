@@ -1,7 +1,6 @@
 // UserProfile.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import axios from "../../lib/httpClient";
-import { createRepair } from "../../services/repairsApi";
+import axios from "axios";
 
 const API_BASE =
   process.env.NODE_ENV === "production" ? "/api" : "http://localhost:5000/api";
@@ -115,9 +114,9 @@ const UserProfile = () => {
         ...ntForm,
         reported_by: Number(userId), // FK tới tb_users.id_users
       };
-      // Gọi backend tạo ticket (đã chuẩn hoá giá trị theo enum của server)
-      const res = await createRepair(payload);
-      const idNew = res?.id_repair;
+      // Gọi backend tạo ticket
+      const res = await axios.post(`${API_BASE}/repairs`, payload);
+      const idNew = res?.data?.id_repair;
 
       setNtMsg({
         type: "success",

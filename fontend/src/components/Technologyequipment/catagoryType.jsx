@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import axios from "../../lib/httpClient";
+import axios from "axios";
 
 const API_BASE = "http://localhost:5000/api";
 

@@ -5,7 +5,7 @@ import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Button } from "../ui/button";
-import { ArrowPathIcon, PlusIcon } from "@heroicons/react/24/outline";
+import { RefreshCw, Plus } from "lucide-react";
 import { createRepair } from "../../services/repairsApi";
 
 const DEFAULT_FORM = {
@@ -47,7 +47,7 @@ export default function CreateTicketDialog({ open, onOpenChange, onCreated }) {
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <PlusIcon className="h-4 w-4" /> Tạo ticket sửa chữa
+            <Plus className="h-4 w-4" /> Tạo ticket sửa chữa
           </DialogTitle>
         </DialogHeader>
 
@@ -124,7 +124,7 @@ export default function CreateTicketDialog({ open, onOpenChange, onCreated }) {
         <DialogFooter>
           <Button variant="outline" onClick={resetAndClose}>Hủy</Button>
           <Button onClick={submit} disabled={loading} className="gap-2">
-            {loading && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
+            {loading && <RefreshCw className="h-4 w-4 animate-spin" />}
             Tạo ticket
           </Button>
         </DialogFooter>

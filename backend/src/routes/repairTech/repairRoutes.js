@@ -19,5 +19,7 @@ router.put("/:id/detail", ctrl.upsertDetail);
 router.post("/:id/parts", ctrl.addPart);
 // UPLOAD FILES
 router.post("/:id/files", upload.array("files", 8), ctrl.uploadFiles);
+// STATS SUMMARY
+router.get("/summary", ctrl.getSummaryStatsSafe);
 
 module.exports = router;

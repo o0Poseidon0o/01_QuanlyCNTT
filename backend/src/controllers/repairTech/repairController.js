@@ -10,6 +10,7 @@ const RepairFiles = require("../../models/RepairTech/repairFiles");
 const Devices = require("../../models/Techequipment/devices");
 const User = require("../../models/Users/User");
 const RepairVendor = require("../../models/RepairTech/repairVendor");
+const { get } = require("../../routes/repairTech/repairRoutes");
 
 const normalizeKey = (value) =>
   String(value ?? "")
@@ -68,7 +69,104 @@ const ensureEnum = (value, dictionary, fallback = undefined) => {
   return fallback;
 };
 
-function toVND(n) { return Number(n || 0); }
+const normalizeKey = (value) =>
+  String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+const STATUS_MAP = new Map([
+  ["duoc_yeu_cau", "Được yêu cầu"],
+  ["requested", "Được yêu cầu"],
+  ["approved", "Đã duyệt"],
+  ["da_duyet", "Đã duyệt"],
+  ["dang_xu_ly", "Đang xử lý"],
+  ["in_progress", "Đang xử lý"],
+  ["cho_linh_kien", "Chờ linh kiện"],
+  ["pending_parts", "Chờ linh kiện"],
+  ["hoan_tat", "Hoàn tất"],
+  ["completed", "Hoàn tất"],
+  ["huy", "Huỷ"],
+  ["huy_bo", "Huỷ"],
+  ["canceled", "Huỷ"],
+  ["cancelled", "Huỷ"],
+]);
+
+const SEVERITY_MAP = new Map([
+  ["thap", "Thấp"],
+  ["low", "Thấp"],
+  ["trung_binh", "Trung bình"],
+  ["medium", "Trung bình"],
+  ["cao", "Cao"],
+  ["high", "Cao"],
+  ["khan", "Khẩn"],
+  ["khan_cap", "Khẩn"],
+  ["critical", "Khẩn"],
+]);
+
+const PRIORITY_MAP = new Map([
+  ["thap", "Thấp"],
+  ["low", "Thấp"],
+  ["binh_thuong", "Bình thường"],
+  ["binhthuong", "Bình thường"],
+  ["normal", "Bình thường"],
+  ["cao", "Cao"],
+  ["high", "Cao"],
+  ["urgent", "Cao"],
+]);
+
+const ensureEnum = (value, dictionary, fallback = undefined) => {
+  if (value == null || value === "") return fallback;
+  const normalized = normalizeKey(value);
+  if (dictionary.has(normalized)) {
+    return dictionary.get(normalized);
+  }
+  return fallback;
+};
+
+const getEnumValues = (model, attribute) =>
+  (model?.rawAttributes?.[attribute]?.values || []).slice();
+
+const alignEnumValue = (enumValues, candidate, fallback = candidate) => {
+  if (!candidate) return fallback;
+  const normalized = normalizeKey(candidate);
+  for (const value of enumValues || []) {
+    if (normalizeKey(value) === normalized) {
+      return value;
+    }
+  }
+  return fallback;
+};
+
+const STATUS_ENUM_VALUES = getEnumValues(RepairRequest, "status");
+const SEVERITY_ENUM_VALUES = getEnumValues(RepairRequest, "severity");
+const PRIORITY_ENUM_VALUES = getEnumValues(RepairRequest, "priority");
+
+const CANCELED_VALUE = alignEnumValue(
+  STATUS_ENUM_VALUES,
+  STATUS_MAP.get("canceled") || "canceled",
+  STATUS_MAP.get("canceled") || "canceled",
+);
+
+const DEFAULT_STATUS = alignEnumValue(
+  STATUS_ENUM_VALUES,
+  STATUS_MAP.get("requested") || STATUS_ENUM_VALUES[0],
+  STATUS_MAP.get("requested") || STATUS_ENUM_VALUES[0],
+);
+
+const DEFAULT_SEVERITY = alignEnumValue(
+  SEVERITY_ENUM_VALUES,
+  SEVERITY_MAP.get("medium") || SEVERITY_ENUM_VALUES[0],
+  SEVERITY_MAP.get("medium") || SEVERITY_ENUM_VALUES[0],
+);
+
+const DEFAULT_PRIORITY = alignEnumValue(
+  PRIORITY_ENUM_VALUES,
+  PRIORITY_MAP.get("normal") || PRIORITY_ENUM_VALUES[0],
+  PRIORITY_MAP.get("normal") || PRIORITY_ENUM_VALUES[0],
+);
 
 const listRepairs = async (req, res) => {
   try {
@@ -104,6 +202,11 @@ const listRepairs = async (req, res) => {
         { model: User, as: "Reporter", attributes: ["id_users", "username"] },
       ],
     });
+
+    const cancelKey = normalizeKey(CANCELED_VALUE || "canceled");
+    const filteredRows = excludeCanceled && !resolvedStatusForFilter
+      ? rows.filter((row) => normalizeKey(row.status) !== cancelKey)
+      : rows;
 
     // ----- chi tiết: dùng [Op.in] khi query theo mảng id -----
     const ids = rows.map((r) => r.id_repair);
@@ -229,15 +332,8 @@ const createRequest = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const {
-      id_devices,
-      reported_by,
-      title,
-      issue_description,
-      severity = "medium",
-      priority = "normal",
-      sla_hours = null,
-      date_down = null,
-      expected_date = null,
+      id_devices, reported_by, title, issue_description,
+      severity = "medium", priority = "normal", sla_hours = null, date_down = null, expected_date = null
     } = req.body;
 
     const resolvedSeverity = ensureEnum(severity, SEVERITY_MAP, "Trung bình");
@@ -245,27 +341,13 @@ const createRequest = async (req, res) => {
     const resolvedStatus = ensureEnum("requested", STATUS_MAP, "Được yêu cầu");
 
     const r = await RepairRequest.create({
-      id_devices,
-      reported_by,
-      title,
-      issue_description,
-      severity: resolvedSeverity,
-      priority: resolvedPriority,
-      status: resolvedStatus,
-      date_reported: new Date(),
-      sla_hours,
-      date_down,
-      expected_date,
-      last_updated: new Date(),
+      id_devices, reported_by, title, issue_description, severity, priority,
+      status: "requested", date_reported: new Date(), sla_hours, date_down, expected_date, last_updated: new Date(),
     }, { transaction: t });
 
     await RepairHistory.create({
-      id_repair: r.id_repair,
-      actor_user: reported_by,
-      old_status: null,
-      new_status: resolvedStatus,
-      note: "Created ticket",
-      created_at: new Date(),
+      id_repair: r.id_repair, actor_user: reported_by, old_status: null, new_status: "requested",
+      note: "Created ticket", created_at: new Date(),
     }, { transaction: t });
 
     await t.commit();
@@ -293,12 +375,7 @@ const updateStatus = async (req, res) => {
     await r.save({ transaction: t });
 
     await RepairHistory.create({
-      id_repair: id,
-      actor_user,
-      old_status,
-      new_status: resolvedStatus,
-      note: note || null,
-      created_at: new Date(),
+      id_repair: id, actor_user, old_status, new_status, note: note || null, created_at: new Date(),
     }, { transaction: t });
 
     await t.commit();
@@ -327,15 +404,7 @@ const addPart = async (req, res) => {
     const id = Number(req.params.id);
     const parts = Array.isArray(req.body) ? req.body : [req.body];
     const created = await RepairPartUsed.bulkCreate(
-      parts.map((p) => ({
-        id_repair: id,
-        part_name: p.part_name,
-        part_code: p.part_code,
-        qty: p.qty || 1,
-        unit_cost: p.unit_cost || 0,
-        supplier_name: p.supplier_name || null,
-        note: p.note || null,
-      })),
+      parts.map(p => ({ id_repair: id, part_name: p.part_name, part_code: p.part_code, qty: p.qty || 1, unit_cost: p.unit_cost || 0, supplier_name: p.supplier_name || null, note: p.note || null }))
     );
     res.status(201).json({ count: created.length });
   } catch (e) {
@@ -411,13 +480,4 @@ const getSummaryStatsSafe = async (req, res) => {
     return res.status(500).json({ message: "Summary error", error: e?.message || String(e) });
   }
 };
-module.exports = {
-  listRepairs,
-  updateStatus,
-  upsertDetail,
-  addPart,
-  uploadFiles,
-  getSummaryStatsSafe,
-  createRequest,
-  getRepair,
-};
+module.exports = { listRepairs, updateStatus, upsertDetail, addPart, uploadFiles, getSummaryStatsSafe,createRequest, getRepair };

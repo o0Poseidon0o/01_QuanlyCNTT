@@ -1,15 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import {
-  WrenchIcon,
-  ArrowPathIcon,
-  ArrowDownTrayIcon,
-  FunnelIcon,
-  MagnifyingGlassIcon,
-  ExclamationTriangleIcon,
-  ClockIcon,
-  CheckCircleIcon,
-  ArrowTopRightOnSquareIcon,
-} from "@heroicons/react/24/outline";
+  Wrench, RefreshCw, Download, Filter, Search,
+  AlertTriangle, Clock3, CheckCircle2, ExternalLink
+} from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
@@ -21,6 +15,10 @@ import KPI from "./KPI";
 import TicketSheet from "./TicketSheet";
 import { listRepairs, getSummaryStats } from "../../services/repairsApi";
 
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend, Tooltip as RTooltip
+} from "recharts";
 
 // ---------- helpers ----------
 const formatDate = (dt) => (dt ? new Date(dt).toLocaleString() : "-");
@@ -49,7 +47,6 @@ function calcKPIs(rows) {
 }
 
 // ---- chống cache + lọc bảo hiểm + chống trùng
-
 const buildParams = (p = {}) => {
   const sanitized = Object.entries(p).reduce((acc, [key, value]) => {
     if (value == null) return acc;
@@ -104,97 +101,42 @@ export default function RepairManagementUI() {
 
   // selection
   const [selected, setSelected] = useState(null);
-  const [error, setError] = useState(null);
-
-  const filters = useMemo(
-    () => ({
-      q: search.trim() || undefined,
-      status: status === "all" ? undefined : status,
-      severity: severity === "all" ? undefined : severity,
-    }),
-    [search, status, severity],
-  );
 
   // fetch list (no-cache + clean)
   useEffect(() => {
-    let cancelled = false;
     setLoading(true);
-    setError(null);
-
-    listRepairs(buildParams(filters))
+    listRepairs(noCacheParams({ q: search, status, severity }))
       .then((data) => {
-        if (cancelled) return;
+        console.log("🔎 /repairs response", {
+          at: new Date().toISOString(),
+          count: Array.isArray(data) ? data.length : 0,
+          sample: Array.isArray(data) ? data.slice(0, 3) : []
+        });
         setTickets(cleanTickets(Array.isArray(data) ? data : []));
       })
-      .catch((err) => {
-        if (cancelled) return;
-        console.error("Không thể tải danh sách ticket", err);
-        setTickets([]);
-        setError("Không thể tải danh sách ticket. Vui lòng thử lại.");
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [filters]);
+      .finally(() => setLoading(false));
+  }, [search, status, severity]);
 
   // fetch stats
   useEffect(() => {
-    let cancelled = false;
-
-    getSummaryStats()
-      .then((s) => {
-        if (cancelled) return;
-        setChartMonthly((s?.monthly || []).map((item) => ({
-          month: item.month,
-          cost: Number(item.cost) || 0,
-        })));
-        const dist = (s?.status || []).map((x) => ({
-          name: STATUS_MAP[x.name]?.label || x.name,
-          value: Number(x.value) || 0,
-        }));
-        setChartStatus(dist);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.error("Không thể tải thống kê sửa chữa", err);
-        setChartMonthly([]);
-        setChartStatus([]);
-      });
-
-    return () => {
-      cancelled = true;
-    };
+    getSummaryStats().then((s) => {
+      setChartMonthly(s?.monthly || []);
+      const dist = (s?.status || []).map((x) => ({
+        name: STATUS_MAP[x.name]?.label || x.name,
+        value: x.value,
+      }));
+      setChartStatus(dist);
+    });
   }, []);
 
   const kpi = useMemo(() => calcKPIs(tickets), [tickets]);
-  const maxMonthlyCost = useMemo(
-    () => chartMonthly.reduce((max, item) => Math.max(max, item.cost || 0), 0),
-    [chartMonthly],
-  );
-  const totalStatusCount = useMemo(
-    () => chartStatus.reduce((sum, item) => sum + (item.value || 0), 0),
-    [chartStatus],
-  );
 
-  const refetchList = useCallback(async () => {
+  const refetchList = () => {
     setLoading(true);
-    setError(null);
-    try {
-      const data = await listRepairs(buildParams(filters));
-      setTickets(cleanTickets(Array.isArray(data) ? data : []));
-    } catch (err) {
-      console.error("Không thể tải lại danh sách ticket", err);
-      setTickets([]);
-      setError("Không thể tải danh sách ticket. Vui lòng thử lại.");
-    } finally {
-      setLoading(false);
-    }
-  }, [filters]);
+    listRepairs(noCacheParams({ q: search, status, severity }))
+      .then((data) => setTickets(cleanTickets(Array.isArray(data) ? data : [])))
+      .finally(() => setLoading(false));
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white dark:from-slate-900 dark:to-slate-950 p-4 md:p-6">
@@ -202,11 +144,11 @@ export default function RepairManagementUI() {
         {/* Header tối giản */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-3">
-            <div className="transition-transform duration-300 ease-out">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
               <div className="h-10 w-10 grid place-items-center rounded-2xl bg-slate-900 text-white dark:bg-white dark:text-slate-900">
-                <WrenchIcon className="h-5 w-5" />
+                <Wrench className="h-5 w-5" />
               </div>
-            </div>
+            </motion.div>
             <div>
               <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Repair Management</h1>
               <p className="text-slate-500 dark:text-slate-400">Theo dõi ticket, SLA và chi phí</p>
@@ -214,10 +156,10 @@ export default function RepairManagementUI() {
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" className="gap-2" onClick={refetchList} title="Làm mới">
-              <ArrowPathIcon className="h-4 w-4" /> Refresh
+              <RefreshCw className="h-4 w-4" /> Refresh
             </Button>
             <Button variant="outline" className="gap-2" onClick={() => alert("TODO: export CSV")} title="Xuất CSV">
-              <ArrowDownTrayIcon className="h-4 w-4" /> Export
+              <Download className="h-4 w-4" /> Export
             </Button>
           </div>
         </div>
@@ -226,14 +168,14 @@ export default function RepairManagementUI() {
         <Card className="mt-6">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
-              <FunnelIcon className="h-4 w-4" />
+              <Filter className="h-4 w-4" />
               Bộ lọc
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="flex items-center gap-2">
-                <MagnifyingGlassIcon className="h-4 w-4 text-slate-400" />
+                <Search className="h-4 w-4 text-slate-400" />
                 <Input
                   placeholder="Tìm theo tiêu đề, thiết bị, mô tả…"
                   value={search}
@@ -269,39 +211,12 @@ export default function RepairManagementUI() {
           </CardContent>
         </Card>
 
-        {error && (
-          <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            {error}
-          </div>
-        )}
-
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
-          <KPI
-            title="Tickets mở"
-            value={kpi.open}
-            icon={<ExclamationTriangleIcon className="h-5 w-5" />}
-            subtitle="status ≠ completed/canceled"
-          />
-          <KPI
-            title="Đang xử lý"
-            value={kpi.inProgress}
-            icon={<ClockIcon className="h-5 w-5" />}
-            subtitle="in_progress + pending_parts"
-          />
-          <KPI
-            title="Quá hạn"
-            value={kpi.overdue}
-            icon={<ExclamationTriangleIcon className="h-5 w-5" />}
-            subtitle="SLA vượt quá"
-            variant="danger"
-          />
-          <KPI
-            title="Chi phí tháng"
-            value={formatMoney(kpi.costThisMonth)}
-            icon={<CheckCircleIcon className="h-5 w-5" />}
-            subtitle="Tổng chi phí tháng hiện tại"
-          />
+          <KPI title="Tickets mở" value={kpi.open} icon={<AlertTriangle className="h-5 w-5" />} subtitle="status ≠ completed/canceled" />
+          <KPI title="Đang xử lý" value={kpi.inProgress} icon={<Clock3 className="h-5 w-5" />} subtitle="in_progress + pending_parts" />
+          <KPI title="Quá hạn" value={kpi.overdue} icon={<AlertTriangle className="h-5 w-5" />} subtitle="SLA vượt quá" variant="danger" />
+          <KPI title="Chi phí tháng" value={formatMoney(kpi.costThisMonth)} icon={<CheckCircle2 className="h-5 w-5" />} subtitle="Tổng chi phí tháng hiện tại" />
         </div>
 
         {/* Charts */}
@@ -311,27 +226,17 @@ export default function RepairManagementUI() {
               <CardTitle>Chi phí theo tháng</CardTitle>
             </CardHeader>
             <CardContent className="pt-4">
-              {chartMonthly.length === 0 ? (
-                <p className="text-sm text-slate-500">Chưa có dữ liệu chi phí.</p>
-              ) : (
-                <div className="space-y-3">
-                  {chartMonthly.map((item) => {
-                    const pct = maxMonthlyCost > 0 ? Math.round((item.cost / maxMonthlyCost) * 100) : 0;
-                    return (
-                      <div key={item.month} className="flex items-center gap-3">
-                        <div className="w-20 text-sm text-slate-500">{item.month}</div>
-                        <div className="flex-1 h-2 rounded-full bg-slate-200 overflow-hidden">
-                          <div
-                            className="h-full bg-slate-900"
-                            style={{ width: `${Math.max(4, pct)}%` }}
-                          />
-                        </div>
-                        <div className="w-28 text-right text-sm font-medium">{formatMoney(item.cost)}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartMonthly}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="month" />
+                    <YAxis />
+                    <RTooltip />
+                    <Bar dataKey="cost" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </CardContent>
           </Card>
 
@@ -340,28 +245,19 @@ export default function RepairManagementUI() {
               <CardTitle>Tỉ lệ trạng thái</CardTitle>
             </CardHeader>
             <CardContent className="pt-4">
-              {chartStatus.length === 0 ? (
-                <p className="text-sm text-slate-500">Chưa có dữ liệu trạng thái.</p>
-              ) : (
-                <div className="space-y-3">
-                  {chartStatus.map((item) => {
-                    const pct = totalStatusCount > 0 ? Math.round((item.value / totalStatusCount) * 100) : 0;
-                    return (
-                      <div key={item.name} className="flex items-center gap-3">
-                        <div className="w-32 text-sm text-slate-500">{item.name}</div>
-                        <div className="flex-1 h-2 rounded-full bg-slate-200 overflow-hidden">
-                          <div
-                            className="h-full bg-emerald-500"
-                            style={{ width: `${Math.max(4, pct)}%` }}
-                          />
-                        </div>
-                        <div className="w-12 text-right text-sm font-medium">{item.value}</div>
-                        <div className="w-10 text-right text-xs text-slate-400">{pct}%</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={chartStatus} dataKey="value" nameKey="name" outerRadius={90}>
+                      {chartStatus.map((_, i) => (
+                        <Cell key={i} />
+                      ))}
+                    </Pie>
+                    <Legend />
+                    <RTooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -415,7 +311,7 @@ export default function RepairManagementUI() {
                               title="Open details"
                               onClick={() => setSelected(t)}
                             >
-                              <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+                              <ExternalLink className="h-4 w-4" />
                             </button>
                           </div>
                           <div className="text-xs text-slate-500 line-clamp-1">{t.issue_description}</div>

@@ -254,12 +254,12 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
                           rel="noreferrer"
                           className="flex items-center gap-3 p-3 rounded-xl border hover:bg-slate-50"
                         >
-                          <DocumentTextIcon className="h-5 w-5" />
+                          <FileText className="h-5 w-5" />
                           <div>
                             <div className="text-sm font-medium">{f.file_name}</div>
                             <div className="text-xs text-slate-500">{f.mime_type}</div>
                           </div>
-                          <ChevronRightIcon className="ml-auto h-4 w-4 text-slate-400" />
+                          <ChevronRight className="ml-auto h-4 w-4 text-slate-400" />
                         </a>
                       ))}
                       {!ticket.files?.length && (

@@ -1,7 +1,7 @@
 import React, { useState, createRef, useEffect } from "react";
 import { createPopper } from "@popperjs/core";
 import { useNavigate } from "react-router-dom"; // Import useNavigate
-import axios from "../../lib/httpClient";
+import axios from "axios";
 
 const UserDropdown = () => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
