@@ -52,7 +52,6 @@ function calcKPIs(rows) {
 
 const buildParams = (p = {}) => {
   const sanitized = Object.entries(p).reduce((acc, [key, value]) => {
-
     if (value == null) return acc;
     if (typeof value === "string" && value.trim() === "") return acc;
     if (value === "all") return acc;

@@ -5,6 +5,8 @@ const upload = require("../../middleware/Repair/uploadRepairfiles"); // multer
 
 // LIST + FILTER
 router.get("/", ctrl.listRepairs);
+// STATS SUMMARY đặt trước tuyến động
+router.get("/summary", ctrl.getSummaryStatsSafe);
 // DETAIL
 router.get("/:id", ctrl.getRepair);
 // CREATE TICKET
@@ -17,7 +19,5 @@ router.put("/:id/detail", ctrl.upsertDetail);
 router.post("/:id/parts", ctrl.addPart);
 // UPLOAD FILES
 router.post("/:id/files", upload.array("files", 8), ctrl.uploadFiles);
-// STATS SUMMARY
-router.get("/summary", ctrl.getSummaryStatsSafe);
 
 module.exports = router;

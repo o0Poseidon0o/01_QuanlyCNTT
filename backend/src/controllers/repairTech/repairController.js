@@ -10,7 +10,6 @@ const RepairFiles = require("../../models/RepairTech/repairFiles");
 const Devices = require("../../models/Techequipment/devices");
 const User = require("../../models/Users/User");
 const RepairVendor = require("../../models/RepairTech/repairVendor");
-const { get } = require("../../routes/repairTech/repairRoutes");
 
 const normalizeKey = (value) =>
   String(value ?? "")
@@ -79,7 +78,7 @@ const listRepairs = async (req, res) => {
     const where = {};
     // Ẩn ticket "canceled" mặc định, muốn xem cả thì truyền ?includeCanceled=1
     if (!includeCanceled || includeCanceled === "0") {
-      where.status = { [Op.ne]: "canceled" };
+      where.status = { [Op.ne]: CANCELED_VALUE };
     }
     if (status && status !== "all") {
       const resolvedStatus = ensureEnum(status, STATUS_MAP);
@@ -328,7 +327,15 @@ const addPart = async (req, res) => {
     const id = Number(req.params.id);
     const parts = Array.isArray(req.body) ? req.body : [req.body];
     const created = await RepairPartUsed.bulkCreate(
-      parts.map(p => ({ id_repair: id, part_name: p.part_name, part_code: p.part_code, qty: p.qty || 1, unit_cost: p.unit_cost || 0, supplier_name: p.supplier_name || null, note: p.note || null }))
+      parts.map((p) => ({
+        id_repair: id,
+        part_name: p.part_name,
+        part_code: p.part_code,
+        qty: p.qty || 1,
+        unit_cost: p.unit_cost || 0,
+        supplier_name: p.supplier_name || null,
+        note: p.note || null,
+      })),
     );
     res.status(201).json({ count: created.length });
   } catch (e) {
@@ -404,4 +411,13 @@ const getSummaryStatsSafe = async (req, res) => {
     return res.status(500).json({ message: "Summary error", error: e?.message || String(e) });
   }
 };
-module.exports = { listRepairs, updateStatus, upsertDetail, addPart, uploadFiles, getSummaryStatsSafe,createRequest, getRepair };
+module.exports = {
+  listRepairs,
+  updateStatus,
+  upsertDetail,
+  addPart,
+  uploadFiles,
+  getSummaryStatsSafe,
+  createRequest,
+  getRepair,
+};
