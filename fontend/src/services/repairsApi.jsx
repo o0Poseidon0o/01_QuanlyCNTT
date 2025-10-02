@@ -1,5 +1,5 @@
 // src/services/repairsApi.js
-import axios from "axios";
+import axios from "../lib/httpClient";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:5000/api";
 

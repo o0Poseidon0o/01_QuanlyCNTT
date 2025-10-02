@@ -2,6 +2,9 @@ import React from "react";
 import { Card, CardContent } from "../ui/card";
 
 export default function KPI({ title, value, subtitle, icon, variant }) {
+  const badgeClass =
+    variant === "danger" ? "bg-rose-50 text-rose-600" : "bg-slate-50 text-slate-700";
+
   return (
     <Card className={variant === "danger" ? "border-rose-200" : ""}>
       <CardContent className="p-4">
@@ -11,7 +14,7 @@ export default function KPI({ title, value, subtitle, icon, variant }) {
             <div className="text-2xl font-bold mt-1">{value}</div>
             {subtitle && <div className="text-xs text-slate-400 mt-1">{subtitle}</div>}
           </div>
-          <div className={`h-10 w-10 grid place-items-center rounded-xl ${variant==="danger"?"bg-rose-50 text-rose-600":"bg-slate-50 text-slate-700"}`}>
+          <div className={`h-10 w-10 grid place-items-center rounded-xl ${badgeClass}`}>
             {icon}
           </div>
         </div>

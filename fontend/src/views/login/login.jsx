@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import axios from "axios";
+import axios from "../../lib/httpClient";
 import logo from "../../images/logo/logo_towa.png";
 import { Link } from "react-router-dom"; // nhớ import ở đầu file
 

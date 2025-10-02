@@ -1,5 +1,5 @@
 import React from "react";
-import { FileText, ChevronRight } from "lucide-react";
+import { DocumentTextIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../ui/tabs";
 import { Card, CardHeader, CardTitle, CardContent } from "../ui/card";
@@ -102,7 +102,7 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
       <SheetContent side="right" className="w-full sm:max-w-xl">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5" /> Ticket #{ticket?.id_repair ?? "-"}
+            <DocumentTextIcon className="h-5 w-5" /> Ticket #{ticket?.id_repair ?? "-"}
           </SheetTitle>
         </SheetHeader>
 
@@ -254,12 +254,12 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
                           rel="noreferrer"
                           className="flex items-center gap-3 p-3 rounded-xl border hover:bg-slate-50"
                         >
-                          <FileText className="h-5 w-5" />
+                          <DocumentTextIcon className="h-5 w-5" />
                           <div>
                             <div className="text-sm font-medium">{f.file_name}</div>
                             <div className="text-xs text-slate-500">{f.mime_type}</div>
                           </div>
-                          <ChevronRight className="ml-auto h-4 w-4 text-slate-400" />
+                          <ChevronRightIcon className="ml-auto h-4 w-4 text-slate-400" />
                         </a>
                       ))}
                       {!ticket.files?.length && (

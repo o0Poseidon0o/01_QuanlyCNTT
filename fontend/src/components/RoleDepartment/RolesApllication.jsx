@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import axios from "axios";
+import axios from "../../lib/httpClient";
 
 const RolesApplication = () => {
   // State để lưu thông tin role

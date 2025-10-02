@@ -1,6 +1,6 @@
 // UserProfile.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import axios from "axios";
+import axios from "../../lib/httpClient";
 
 const API_BASE =
   process.env.NODE_ENV === "production" ? "/api" : "http://localhost:5000/api";

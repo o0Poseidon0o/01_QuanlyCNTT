@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import axios from "axios";
+import axios from "../../lib/httpClient";
 
 const Repairhistory = () => {
   const [history, setHistory] = useState([]);
