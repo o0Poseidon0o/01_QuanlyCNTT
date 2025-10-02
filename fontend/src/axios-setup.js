@@ -1,5 +1,8 @@
 // Chỉ import 1 lần ở entry (index.js/main.jsx)
-import axios from "axios";
+import httpClient from "./lib/httpClient";
+
+// Giữ tên axios cho tương thích với mã cũ nhưng tránh import trùng
+const axios = httpClient;
 
 /** ====== Cấu hình chung (có lợi cho toàn app) ====== */
 axios.defaults.timeout = 20000; // 20s, tránh treo request
@@ -36,8 +39,23 @@ axios.interceptors.response.use(
   (err) => {
     // Bạn có thể thay thành toast/notification của UI framework
     if (process.env.NODE_ENV !== "production") {
-      console.error("[API ERROR]", err?.config?.url, err?.response?.status, err?.message);
+      const payload = err?.response?.data;
+      const details = payload && typeof payload === "object" ? JSON.stringify(payload) : payload;
+      console.error(
+        "[API ERROR]",
+        err?.config?.url,
+        err?.response?.status,
+        err?.message,
+        details ? `→ ${details}` : "",
+      );
     }
     return Promise.reject(err);
   }
 );
+
+// Cho phép những nơi khác (hoặc DevTools) truy cập giống axios thật
+if (typeof window !== "undefined") {
+  window.axios = axios;
+}
+
+export default axios;

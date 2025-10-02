@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import axios from "axios";
+import axios from "../../lib/httpClient";
 import CategoryModal from "./catagoryType";
 
 const API_BASE = "http://localhost:5000/api";

@@ -1,21 +1,8 @@
 import React, { useEffect, useState, useMemo } from "react";
-import axios from "axios";
-import {
-  PieChart,
-  Pie,
-  Cell,
-  Tooltip,
-  Legend,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  ResponsiveContainer,
-} from "recharts";
+import axios from "../../lib/httpClient";
 
 const API_BASE = "http://localhost:5000/api";
-const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#A569BD", "#2ECC71", "#F39C12", "#E67E22", "#9B59B6", "#1ABC9C"];
+const COLORS = ["#0ea5e9", "#22c55e", "#f97316", "#facc15", "#a855f7", "#ec4899", "#14b8a6", "#8b5cf6", "#ef4444", "#2dd4bf"];
 
 const Statisticsequipment = () => {
   const [deviceStats, setDeviceStats] = useState([]);        // [{ device_type, count }]
@@ -68,6 +55,11 @@ const Statisticsequipment = () => {
     [deviceStats]
   );
 
+  const totalUsers = useMemo(
+    () => userStats.reduce((s, i) => s + (Number(i.count) || 0), 0),
+    [userStats],
+  );
+
   return (
     <div className="p-6 bg-gray-100 min-h-screen">
       <h1 className="text-3xl font-bold mb-6 text-gray-800">📊 Thống kê hệ thống</h1>
@@ -89,26 +81,32 @@ const Statisticsequipment = () => {
             {deviceStats.length === 0 && !loading ? "Chưa có dữ liệu" : null}
           </div>
 
-          <ResponsiveContainer width="100%" height={350}>
-            <PieChart>
-              <Pie
-                data={deviceStats}
-                dataKey="count"
-                nameKey="device_type"
-                cx="50%"
-                cy="50%"
-                outerRadius={120}
-                fill="#8884d8"
-                label
-              >
-                {deviceStats.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip />
-              <Legend />
-            </PieChart>
-          </ResponsiveContainer>
+          <div className="space-y-3">
+            {deviceStats.map((entry, index) => {
+              const pct = totalDevices > 0 ? Math.round((entry.count / totalDevices) * 100) : 0;
+              const color = COLORS[index % COLORS.length];
+              return (
+                <div key={`${entry.device_type}-${index}`} className="flex items-center gap-3">
+                  <span
+                    className="inline-flex h-3 w-3 rounded-full"
+                    style={{ backgroundColor: color }}
+                  />
+                  <div className="w-40 text-sm text-gray-600">{entry.device_type}</div>
+                  <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full"
+                      style={{ width: `${Math.max(4, pct)}%`, backgroundColor: color }}
+                    />
+                  </div>
+                  <div className="w-12 text-right text-sm font-semibold text-gray-700">{entry.count}</div>
+                  <div className="w-12 text-right text-xs text-gray-500">{pct}%</div>
+                </div>
+              );
+            })}
+            {deviceStats.length === 0 && !loading && (
+              <p className="text-sm text-gray-500">Không có dữ liệu thiết bị.</p>
+            )}
+          </div>
         </div>
 
         {/* Biểu đồ cột - Người dùng theo bộ phận */}
@@ -121,16 +119,32 @@ const Statisticsequipment = () => {
             {userStats.length === 0 && !loading ? "Chưa có dữ liệu" : null}
           </div>
 
-          <ResponsiveContainer width="100%" height={350}>
-            <BarChart data={userStats}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="department_name" />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="count" fill="#82ca9d" />
-            </BarChart>
-          </ResponsiveContainer>
+          <div className="space-y-3">
+            {userStats.map((entry, index) => {
+              const pct = totalUsers > 0 ? Math.round((entry.count / totalUsers) * 100) : 0;
+              const color = COLORS[(index + 3) % COLORS.length];
+              return (
+                <div key={`${entry.department_name}-${index}`} className="flex items-center gap-3">
+                  <span
+                    className="inline-flex h-3 w-3 rounded-full"
+                    style={{ backgroundColor: color }}
+                  />
+                  <div className="w-48 text-sm text-gray-600">{entry.department_name}</div>
+                  <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full"
+                      style={{ width: `${Math.max(4, pct)}%`, backgroundColor: color }}
+                    />
+                  </div>
+                  <div className="w-12 text-right text-sm font-semibold text-gray-700">{entry.count}</div>
+                  <div className="w-12 text-right text-xs text-gray-500">{pct}%</div>
+                </div>
+              );
+            })}
+            {userStats.length === 0 && !loading && (
+              <p className="text-sm text-gray-500">Không có dữ liệu người dùng.</p>
+            )}
+          </div>
         </div>
       </div>
     </div>

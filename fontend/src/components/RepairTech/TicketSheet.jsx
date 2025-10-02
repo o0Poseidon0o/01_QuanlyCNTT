@@ -4,7 +4,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../ui/tabs";
 import { Card, CardHeader, CardTitle, CardContent } from "../ui/card";
 import { Skeleton } from "../ui/skeleton";
-import { updateStatus, uploadFiles } from "../../services/repairsApi";
+import { getRepair, updateStatus, uploadFiles } from "../../services/repairsApi";
 
 const STATUS_MAP = {
   requested: { label: "Requested", cls: "bg-slate-200 text-slate-700" },
@@ -19,7 +19,7 @@ const fmtDate = (x) => (x ? new Date(x).toLocaleString() : "-");
 const fmtVND = (n) =>
   n == null ? "-" : Number(n).toLocaleString("vi-VN", { style: "currency", currency: "VND" });
 
-function SeverityBadge({ sev }) {
+function SeverityBadge({ sev, label }) {
   const map = {
     critical: "bg-rose-600",
     high: "bg-orange-500",
@@ -28,10 +28,11 @@ function SeverityBadge({ sev }) {
   };
   return (
     <span className={`px-2 py-0.5 text-xs rounded text-white ${map[sev] || "bg-slate-500"}`}>
-      {sev || "low"}
+      {label || sev || "low"}
     </span>
   );
 }
+
 function InfoRow({ label, value }) {
   return (
     <div className="flex items-center gap-2">
@@ -41,13 +42,14 @@ function InfoRow({ label, value }) {
   );
 }
 
-function Actions({ ticket, onChanged }) {
-  const [busy, setBusy] = React.useState(false);
+function Actions({ ticket, onChanged, onRefresh }) {
+  const [busy, setBusy] = useState(false);
 
   const markCompleted = async () => {
     setBusy(true);
     try {
       await updateStatus(ticket.id_repair, { actor_user: 1, new_status: "completed", note: "Hoàn tất" });
+      onRefresh?.();
       onChanged?.();
     } catch (e) {
       console.error(e);
@@ -63,6 +65,7 @@ function Actions({ ticket, onChanged }) {
     setBusy(true);
     try {
       await uploadFiles(ticket.id_repair, files, 1);
+      onRefresh?.();
       onChanged?.();
     } catch (err) {
       console.error(err);
@@ -90,6 +93,43 @@ function Actions({ ticket, onChanged }) {
   );
 }
 
+const mergeTicketWithDetail = (summary, payload) => {
+  if (!summary && !payload) return null;
+  const base = { ...(summary || {}) };
+  const ticketInfo = payload?.ticket ? { ...payload.ticket } : {};
+  const detail = payload?.detail ? { ...payload.detail } : {};
+  const combinedCost =
+    Number(detail.labor_cost || 0) + Number(detail.parts_cost || 0) + Number(detail.other_cost || 0);
+
+  const timeline = Array.isArray(payload?.history)
+    ? payload.history.map((h) => ({
+        ...h,
+        actor_name: h.actor_name || h.User?.username || null,
+      }))
+    : [];
+
+  const merged = {
+    ...base,
+    ...ticketInfo,
+    ...detail,
+    detail,
+    timeline,
+    parts: Array.isArray(payload?.parts) ? payload.parts : [],
+    files: Array.isArray(payload?.files) ? payload.files : [],
+    reporter_name: ticketInfo.reporter_name || base.reporter_name || null,
+    approver_name: ticketInfo.approver_name || base.approver_name || null,
+    device_name: ticketInfo.device_name || base.device_name || "",
+    vendor_name: detail.vendor_name || base.vendor_name || null,
+    technician_name: detail.technician_name || base.assignee || null,
+  };
+
+  if (!Number.isNaN(combinedCost) && combinedCost > 0) {
+    merged.total_cost = combinedCost;
+  }
+
+  return merged;
+};
+
 /**
  * Props:
  * - ticket: object | null
@@ -97,6 +137,55 @@ function Actions({ ticket, onChanged }) {
  * - onChanged?: ()=>void // callback để refetch list
  */
 export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
+  const [fullTicket, setFullTicket] = useState(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [detailError, setDetailError] = useState(null);
+
+  const fetchDetail = useCallback(
+    async (summary, { silent } = {}) => {
+      if (!summary?.id_repair) return;
+      if (!silent) {
+        setLoadingDetail(true);
+        setDetailError(null);
+      }
+      try {
+        const payload = await getRepair(summary.id_repair);
+        setFullTicket(mergeTicketWithDetail(summary, payload));
+        setDetailError(null);
+      } catch (err) {
+        console.error("Không thể tải chi tiết ticket", err);
+        setFullTicket(summary);
+        setDetailError("Không thể tải chi tiết ticket. Vui lòng thử lại.");
+      } finally {
+        if (!silent) {
+          setLoadingDetail(false);
+        }
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!ticket) {
+      setFullTicket(null);
+      setLoadingDetail(false);
+      setDetailError(null);
+      return;
+    }
+    fetchDetail(ticket);
+  }, [ticket, ticket?.id_repair, fetchDetail]);
+
+  const refreshDetail = useCallback(() => {
+    if (ticket) {
+      fetchDetail(ticket, { silent: true });
+    }
+  }, [fetchDetail, ticket]);
+
+  const view = fullTicket || ticket || {};
+  const timeline = view.timeline || [];
+  const parts = view.parts || [];
+  const files = view.files || [];
+
   return (
     <Sheet open={!!ticket} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full sm:max-w-xl">
@@ -113,7 +202,16 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
           </div>
         ) : (
           <div className="mt-2">
-            <Actions ticket={ticket} onChanged={onChanged} />
+            <Actions ticket={view} onChanged={onChanged} onRefresh={refreshDetail} />
+
+            {loadingDetail && (
+              <div className="mt-3 text-xs text-slate-500">Đang tải chi tiết ticket...</div>
+            )}
+            {detailError && !loadingDetail && (
+              <div className="mt-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">
+                {detailError}
+              </div>
+            )}
 
             <Tabs defaultValue="overview" className="mt-4">
               <TabsList className="grid grid-cols-3">
@@ -129,26 +227,28 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
                     <CardTitle className="text-base">Mô tả</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="text-sm text-slate-600">{ticket.issue_description || "-"}</div>
+                    <div className="text-sm text-slate-600">{view.issue_description || "-"}</div>
                     <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                       <InfoRow
                         label="Thiết bị"
-                        value={`${ticket.device_name || "-"}${ticket.device_code ? ` (${ticket.device_code})` : ""}`}
+                        value={`${view.device_name || "-"}${view.device_code ? ` (${view.device_code})` : ""}`}
                       />
-                      <InfoRow label="Severity" value={<SeverityBadge sev={ticket.severity} />} />
-                      <InfoRow label="Priority" value={ticket.priority || "-"} />
+                      <InfoRow label="Severity" value={<SeverityBadge sev={view.severity} label={view.severity_label} />} />
+                      <InfoRow label="Priority" value={view.priority_label || view.priority || "-"} />
                       <InfoRow
                         label="Trạng thái"
                         value={
-                          <span className={`px-2 py-1 rounded-full text-xs ${STATUS_MAP[ticket.status]?.cls || "bg-slate-200"}`}>
-                            {STATUS_MAP[ticket.status]?.label || ticket.status || "-"}
+                          <span className={`px-2 py-1 rounded-full text-xs ${STATUS_MAP[view.status]?.cls || "bg-slate-200"}`}>
+                            {STATUS_MAP[view.status]?.label || view.status_label || view.status || "-"}
                           </span>
                         }
                       />
-                      <InfoRow label="Báo lúc" value={fmtDate(ticket.date_reported)} />
-                      <InfoRow label="SLA" value={ticket.sla_hours ? `${ticket.sla_hours} h` : "-"} />
-                      <InfoRow label="Assignee/Vendor" value={ticket.assignee || ticket.vendor_name || "-"} />
-                      <InfoRow label="Chi phí" value={fmtVND(ticket.total_cost)} />
+                      <InfoRow label="Người báo cáo" value={view.reporter_name || "-"} />
+                      <InfoRow label="Báo lúc" value={fmtDate(view.date_reported)} />
+                      <InfoRow label="SLA" value={view.sla_hours ? `${view.sla_hours} h` : "-"} />
+                      <InfoRow label="Assignee" value={view.technician_name || view.assignee || "-"} />
+                      <InfoRow label="Vendor" value={view.vendor_name || "-"} />
+                      <InfoRow label="Chi phí" value={fmtVND(view.total_cost)} />
                     </div>
                   </CardContent>
                 </Card>
@@ -159,14 +259,14 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
                   </CardHeader>
                   <CardContent>
                     <div className="grid grid-cols-2 gap-2 text-sm">
-                      <InfoRow label="Bắt đầu" value={fmtDate(ticket.start_time)} />
-                      <InfoRow label="Kết thúc" value={fmtDate(ticket.end_time)} />
-                      <InfoRow label="Labor (h)" value={ticket.total_labor_hours ?? "-"} />
-                      <InfoRow label="Outcome" value={ticket.outcome || "-"} />
-                      <InfoRow label="Gia hạn BH" value={`${ticket.warranty_extend_mon || 0} tháng`} />
+                      <InfoRow label="Bắt đầu" value={fmtDate(view.start_time)} />
+                      <InfoRow label="Kết thúc" value={fmtDate(view.end_time)} />
+                      <InfoRow label="Labor (h)" value={view.total_labor_hours ?? "-"} />
+                      <InfoRow label="Outcome" value={view.outcome || "-"} />
+                      <InfoRow label="Gia hạn BH" value={`${view.warranty_extend_mon || 0} tháng`} />
                       <InfoRow
                         label="Bảo trì kế"
-                        value={ticket.next_maintenance_date ? fmtDate(ticket.next_maintenance_date) : "-"}
+                        value={view.next_maintenance_date ? fmtDate(view.next_maintenance_date) : "-"}
                       />
                     </div>
                   </CardContent>
@@ -181,7 +281,7 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
                   </CardHeader>
                   <CardContent>
                     <ul className="relative border-l pl-4">
-                      {(ticket.timeline || []).map((h) => (
+                      {timeline.map((h) => (
                         <li key={h.id_history || `${h.created_at}-${h.actor_name}`} className="mb-4">
                           <div className="absolute -left-[6px] h-3 w-3 rounded-full bg-slate-300" />
                           <div className="text-sm">
@@ -190,12 +290,12 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
                               <span className="text-xs text-slate-400">{fmtDate(h.created_at)}</span>
                             </div>
                             <div className="text-slate-600">
-                              {h.note || `${h.old_status || ""} → ${h.new_status || ""}`}
+                              {h.note || `${h.old_status_label || h.old_status || ""} → ${h.new_status_label || h.new_status || ""}`}
                             </div>
                           </div>
                         </li>
                       ))}
-                      {!ticket.timeline?.length && (
+                      {!timeline.length && (
                         <div className="text-sm text-slate-500">Chưa có lịch sử</div>
                       )}
                     </ul>
@@ -221,7 +321,7 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {(ticket.parts || []).map((p, idx) => (
+                        {parts.map((p, idx) => (
                           <tr key={idx} className="border-b">
                             <td className="py-2 pr-3">{p.part_name}</td>
                             <td className="py-2 pr-3">{p.part_code || "-"}</td>
@@ -230,7 +330,7 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
                             <td className="py-2 pr-3">{p.supplier_name || "-"}</td>
                           </tr>
                         ))}
-                        {!ticket.parts?.length && (
+                        {!parts.length && (
                           <tr>
                             <td colSpan={5} className="py-2 text-slate-500">Không có phụ tùng</td>
                           </tr>
@@ -246,7 +346,7 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
                   </CardHeader>
                   <CardContent>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {(ticket.files || []).map((f, idx) => (
+                      {files.map((f, idx) => (
                         <a
                           key={idx}
                           href={f.file_path}
@@ -254,15 +354,15 @@ export default function TicketSheet({ ticket, onOpenChange, onChanged }) {
                           rel="noreferrer"
                           className="flex items-center gap-3 p-3 rounded-xl border hover:bg-slate-50"
                         >
-                          <FileText className="h-5 w-5" />
+                          <DocumentTextIcon className="h-5 w-5" />
                           <div>
                             <div className="text-sm font-medium">{f.file_name}</div>
                             <div className="text-xs text-slate-500">{f.mime_type}</div>
                           </div>
-                          <ChevronRight className="ml-auto h-4 w-4 text-slate-400" />
+                          <ChevronRightIcon className="ml-auto h-4 w-4 text-slate-400" />
                         </a>
                       ))}
-                      {!ticket.files?.length && (
+                      {!files.length && (
                         <div className="text-sm text-slate-500">Chưa có tệp đính kèm</div>
                       )}
                     </div>

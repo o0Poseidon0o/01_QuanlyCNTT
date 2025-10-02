@@ -10,7 +10,6 @@ const RepairFiles = require("../../models/RepairTech/repairFiles");
 const Devices = require("../../models/Techequipment/devices");
 const User = require("../../models/Users/User");
 const RepairVendor = require("../../models/RepairTech/repairVendor");
-const { get } = require("../../routes/repairTech/repairRoutes");
 
 const normalizeKey = (value) =>
   String(value ?? "")
@@ -172,6 +171,9 @@ const listRepairs = async (req, res) => {
   try {
     const { q, status, severity, includeCanceled } = req.query;
 
+    const excludeCanceled = !includeCanceled || includeCanceled === "0" || includeCanceled === 0;
+    const canceledDbValue = getCanceledDbValue();
+
     // ----- where cho RepairRequest -----
     const where = {};
     // Ẩn ticket "canceled" mặc định, muốn xem cả thì truyền ?includeCanceled=1
@@ -182,6 +184,7 @@ const listRepairs = async (req, res) => {
       const resolvedStatus = ensureEnum(status, STATUS_MAP);
       if (resolvedStatus) where.status = resolvedStatus;
     }
+
     if (severity && severity !== "all") {
       const resolvedSeverity = ensureEnum(severity, SEVERITY_MAP);
       if (resolvedSeverity) where.severity = resolvedSeverity;
@@ -198,7 +201,7 @@ const listRepairs = async (req, res) => {
       order: [["date_reported", "DESC"]],
       include: [
         // required:true = INNER JOIN để loại record mồ côi device
-        { model: Devices, attributes: ["id_devices", "name_devices"], required: true },
+        { model: Devices, as: "Device", attributes: ["id_devices", "name_devices"], required: true },
         { model: User, as: "Reporter", attributes: ["id_users", "username"] },
       ],
     });
@@ -209,11 +212,15 @@ const listRepairs = async (req, res) => {
       : rows;
 
     // ----- chi tiết: dùng [Op.in] khi query theo mảng id -----
-    const ids = rows.map((r) => r.id_repair);
+    const ids = filteredRows.map((r) => r.id_repair);
     let detailsMap = new Map();
     if (ids.length) {
       const details = await RepairDetail.findAll({
         where: { id_repair: { [Op.in]: ids } },
+        include: [
+          { model: RepairVendor, attributes: ["id_vendor", "vendor_name", "phone", "email"] },
+          { model: User, as: "Technician", attributes: ["id_users", "username"] },
+        ],
       });
       detailsMap = new Map(details.map((d) => [d.id_repair, d.toJSON()]));
     }
@@ -221,10 +228,12 @@ const listRepairs = async (req, res) => {
     // ----- map data trả về -----
     const num = (v) => Number(v || 0);
 
-    const data = rows.map((r) => {
+    const data = filteredRows.map((instance) => {
+      const r = instance.toJSON();
       const d = detailsMap.get(r.id_repair) || {};
+      const technicianName = d.Technician?.username || null;
       const total_cost = num(d.labor_cost) + num(d.parts_cost) + num(d.other_cost);
-      return {
+      return formatEnumsForResponse({
         id_repair: r.id_repair,
         device_name: r.Device?.name_devices || "",
         device_code: r.id_devices,
@@ -235,11 +244,23 @@ const listRepairs = async (req, res) => {
         status: r.status,
         date_reported: r.date_reported,
         sla_hours: r.sla_hours,
-        assignee: d.technician_user || null,
-        vendor_name: d.id_vendor || null,
-        repair_type: d.repair_type || "in_house",
+        reporter_id: r.reported_by,
+        reporter_name: r.Reporter?.username || null,
+        assignee: technicianName || d.technician_user || null,
+        vendor_id: d.id_vendor || null,
+        vendor_name: d.RepairVendor?.vendor_name || null,
+        repair_type: d.repair_type || null,
+        start_time: d.start_time || null,
+        end_time: d.end_time || null,
+        total_labor_hours: d.total_labor_hours || null,
+        labor_cost: num(d.labor_cost),
+        parts_cost: num(d.parts_cost),
+        other_cost: num(d.other_cost),
+        outcome: d.outcome || null,
+        warranty_extend_mon: d.warranty_extend_mon || null,
+        next_maintenance_date: d.next_maintenance_date || null,
         total_cost,
-      };
+      });
     });
 
     // ----- chống cache ở mọi tầng -----
@@ -248,8 +269,8 @@ const listRepairs = async (req, res) => {
 
     return res.json(data);
   } catch (e) {
-    console.error(e);
-    return res.status(500).json({ message: "Server error" });
+    console.error("listRepairs error:", e);
+    return res.status(500).json({ message: "Server error", detail: e?.message || undefined });
   }
 };
 
@@ -265,7 +286,7 @@ const getRepair = async (req, res) => {
     // Lấy ticket + device + reporter/approver
     const ticket = await RepairRequest.findByPk(id, {
       include: [
-        { model: Devices, attributes: ["id_devices", "name_devices"] },
+        { model: Devices, as: "Device", attributes: ["id_devices", "name_devices"] },
         { model: User, as: "Reporter", attributes: ["id_users", "username"] },
         { model: User, as: "Approver", attributes: ["id_users", "username"] },
       ],
@@ -295,7 +316,7 @@ const getRepair = async (req, res) => {
         where: { id_repair: id },
         order: [["id_part_used", "ASC"]],
       }),
-      RepairFile.findAll({
+      RepairFiles.findAll({
         where: { id_repair: id },
         order: [["uploaded_at", "ASC"]],
         include: [{ model: User, attributes: ["id_users", "username"], foreignKey: "uploaded_by" }],
@@ -306,12 +327,67 @@ const getRepair = async (req, res) => {
     res.set("Cache-Control", "no-store, max-age=0");
     res.set("Pragma", "no-cache");
 
+    const ticketJson = ticket.toJSON();
+    const ticketPayload = formatEnumsForResponse({
+      ...ticketJson,
+      device_name: ticketJson.Device?.name_devices || null,
+      reporter_name: ticketJson.Reporter?.username || null,
+      approver_name: ticketJson.Approver?.username || null,
+    });
+    delete ticketPayload.Device;
+    delete ticketPayload.Reporter;
+    delete ticketPayload.Approver;
+
+    const detailJson = detail ? detail.toJSON() : null;
+    const detailPayload = detailJson
+      ? {
+          ...detailJson,
+          vendor_name: detailJson.RepairVendor?.vendor_name || null,
+          vendor_phone: detailJson.RepairVendor?.phone || null,
+          vendor_email: detailJson.RepairVendor?.email || null,
+          technician_name: detailJson.Technician?.username || null,
+        }
+      : null;
+    if (detailPayload) {
+      delete detailPayload.RepairVendor;
+      delete detailPayload.Technician;
+    }
+
+    const historyJson = history.map((h) => {
+      const row = h.toJSON();
+      const oldStatusKey = STATUS_DICT.toCanonical(row.old_status, row.old_status);
+      const newStatusKey = STATUS_DICT.toCanonical(row.new_status, row.new_status);
+      return {
+        ...row,
+        actor_name: row.User?.username || null,
+        old_status: oldStatusKey,
+        old_status_label: STATUS_DICT.getLabel(oldStatusKey, row.old_status),
+        new_status: newStatusKey,
+        new_status_label: STATUS_DICT.getLabel(newStatusKey, row.new_status),
+      };
+    });
+    historyJson.forEach((entry) => {
+      delete entry.User;
+    });
+
+    const partsJson = parts.map((p) => p.toJSON());
+    const filesJson = files.map((f) => {
+      const row = f.toJSON();
+      return {
+        ...row,
+        uploader_name: row.User?.username || null,
+      };
+    });
+    filesJson.forEach((file) => {
+      delete file.User;
+    });
+
     return res.json({
-      ticket,
-      detail,
-      history,
-      parts,
-      files,
+      ticket: ticketPayload,
+      detail: detailPayload,
+      history: historyJson,
+      parts: partsJson,
+      files: filesJson,
     });
   } catch (e) {
     console.error("getRepairSafe error:", e);
@@ -332,8 +408,15 @@ const createRequest = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const {
-      id_devices, reported_by, title, issue_description,
-      severity = "medium", priority = "normal", sla_hours = null, date_down = null, expected_date = null
+      id_devices,
+      reported_by,
+      title,
+      issue_description,
+      severity = "medium",
+      priority = "normal",
+      sla_hours = null,
+      date_down = null,
+      expected_date = null,
     } = req.body;
 
     const resolvedSeverity = ensureEnum(severity, SEVERITY_MAP, "Trung bình");
@@ -341,13 +424,27 @@ const createRequest = async (req, res) => {
     const resolvedStatus = ensureEnum("requested", STATUS_MAP, "Được yêu cầu");
 
     const r = await RepairRequest.create({
-      id_devices, reported_by, title, issue_description, severity, priority,
-      status: "requested", date_reported: new Date(), sla_hours, date_down, expected_date, last_updated: new Date(),
+      id_devices,
+      reported_by,
+      title,
+      issue_description,
+      severity: resolvedSeverity,
+      priority: resolvedPriority,
+      status: resolvedStatus,
+      date_reported: new Date(),
+      sla_hours,
+      date_down,
+      expected_date,
+      last_updated: new Date(),
     }, { transaction: t });
 
     await RepairHistory.create({
-      id_repair: r.id_repair, actor_user: reported_by, old_status: null, new_status: "requested",
-      note: "Created ticket", created_at: new Date(),
+      id_repair: r.id_repair,
+      actor_user: reported_by,
+      old_status: null,
+      new_status: resolvedStatus,
+      note: "Created ticket",
+      created_at: new Date(),
     }, { transaction: t });
 
     await t.commit();
@@ -375,7 +472,12 @@ const updateStatus = async (req, res) => {
     await r.save({ transaction: t });
 
     await RepairHistory.create({
-      id_repair: id, actor_user, old_status, new_status, note: note || null, created_at: new Date(),
+      id_repair: id,
+      actor_user,
+      old_status,
+      new_status: resolvedStatus,
+      note: note || null,
+      created_at: new Date(),
     }, { transaction: t });
 
     await t.commit();
@@ -404,7 +506,15 @@ const addPart = async (req, res) => {
     const id = Number(req.params.id);
     const parts = Array.isArray(req.body) ? req.body : [req.body];
     const created = await RepairPartUsed.bulkCreate(
-      parts.map(p => ({ id_repair: id, part_name: p.part_name, part_code: p.part_code, qty: p.qty || 1, unit_cost: p.unit_cost || 0, supplier_name: p.supplier_name || null, note: p.note || null }))
+      parts.map((p) => ({
+        id_repair: id,
+        part_name: p.part_name,
+        part_code: p.part_code,
+        qty: p.qty || 1,
+        unit_cost: p.unit_cost || 0,
+        supplier_name: p.supplier_name || null,
+        note: p.note || null,
+      })),
     );
     res.status(201).json({ count: created.length });
   } catch (e) {
@@ -454,10 +564,14 @@ const getSummaryStatsSafe = async (req, res) => {
     // Phân phối trạng thái
     const statusMap = new Map();
     for (const r of requests) {
-      const key = String(r.status || "").toLowerCase();
+      const key = STATUS_DICT.toCanonical(r.status, STATUS_DICT.defaultKey) || STATUS_DICT.defaultKey;
       statusMap.set(key, (statusMap.get(key) || 0) + 1);
     }
-    const status = Array.from(statusMap.entries()).map(([name, value]) => ({ name, value }));
+    const status = Array.from(statusMap.entries()).map(([key, value]) => ({
+      name: key,
+      label: STATUS_DICT.getLabel(key, key),
+      value,
+    }));
 
     // Chi phí theo tháng
     const monthlyMap = new Map();
@@ -480,4 +594,13 @@ const getSummaryStatsSafe = async (req, res) => {
     return res.status(500).json({ message: "Summary error", error: e?.message || String(e) });
   }
 };
-module.exports = { listRepairs, updateStatus, upsertDetail, addPart, uploadFiles, getSummaryStatsSafe,createRequest, getRepair };
+module.exports = {
+  listRepairs,
+  updateStatus,
+  upsertDetail,
+  addPart,
+  uploadFiles,
+  getSummaryStatsSafe,
+  createRequest,
+  getRepair,
+};

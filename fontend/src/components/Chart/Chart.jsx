@@ -1,15 +1,4 @@
 import React from "react";
-import {
-  ComposedChart,
-  Line,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-} from "recharts";
 
 const data = [
   {
@@ -52,26 +41,29 @@ const data = [
 
 const Chart = () => {
   return (
-    <div className="mt-5" style={{ width: "100%", height: 400 }}>
-      <ResponsiveContainer>
-        <ComposedChart
-          data={data}
-          margin={{
-            top: 20,
-            right: 20,
-            bottom: 20,
-            left: 20,
-          }}
-        >
-          <CartesianGrid stroke="#f5f5f5" />
-          <XAxis dataKey="name" scale="band" />
-          <YAxis />
-          <Tooltip />
-          <Legend />
-          <Bar dataKey="uv" barSize={20} fill="#413ea0" />
-          <Line type="monotone" dataKey="uv" stroke="#ff7300" />
-        </ComposedChart>
-      </ResponsiveContainer>
+    <div className="mt-5 w-full">
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="px-4 py-2 text-left font-semibold text-slate-600">Tháng</th>
+              <th className="px-4 py-2 text-right font-semibold text-slate-600">UV</th>
+              <th className="px-4 py-2 text-right font-semibold text-slate-600">PV</th>
+              <th className="px-4 py-2 text-right font-semibold text-slate-600">AMT</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-200">
+            {data.map((row) => (
+              <tr key={row.name} className="hover:bg-slate-50">
+                <td className="px-4 py-2 font-medium text-slate-700">{row.name}</td>
+                <td className="px-4 py-2 text-right text-slate-600">{row.uv}</td>
+                <td className="px-4 py-2 text-right text-slate-600">{row.pv}</td>
+                <td className="px-4 py-2 text-right text-slate-600">{row.amt}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 };

@@ -62,7 +62,12 @@ const RepairRequest = sequelize.define(
   }
 );
 
-RepairRequest.belongsTo(Devices, { foreignKey: "id_devices", onUpdate: "CASCADE", onDelete: "RESTRICT" });
+RepairRequest.belongsTo(Devices, {
+  as: "Device",
+  foreignKey: "id_devices",
+  onUpdate: "CASCADE",
+  onDelete: "RESTRICT",
+});
 RepairRequest.belongsTo(User, { as: "Reporter", foreignKey: "reported_by", onUpdate: "CASCADE", onDelete: "RESTRICT" });
 RepairRequest.belongsTo(User, { as: "Approver", foreignKey: "approved_by", onUpdate: "SET NULL", onDelete: "SET NULL" });
 
