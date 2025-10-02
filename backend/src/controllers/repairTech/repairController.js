@@ -1,3 +1,4 @@
+// backend/src/controllers/repairTech/repairController.js
 const { Op } = require("sequelize");
 const sequelize = require("../../config/database");
 
@@ -11,6 +12,7 @@ const Devices = require("../../models/Techequipment/devices");
 const User = require("../../models/Users/User");
 const RepairVendor = require("../../models/RepairTech/repairVendor");
 
+/* =================== Helpers: chuẩn hoá & từ điển enum =================== */
 const normalizeKey = (value) =>
   String(value ?? "")
     .normalize("NFD")
@@ -19,6 +21,7 @@ const normalizeKey = (value) =>
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
 
+// Map alias -> Nhãn (tiếng Việt)
 const STATUS_MAP = new Map([
   ["duoc_yeu_cau", "Được yêu cầu"],
   ["requested", "Được yêu cầu"],
@@ -68,63 +71,44 @@ const ensureEnum = (value, dictionary, fallback = undefined) => {
   return fallback;
 };
 
-const normalizeKey = (value) =>
-  String(value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-
-const STATUS_MAP = new Map([
-  ["duoc_yeu_cau", "Được yêu cầu"],
-  ["requested", "Được yêu cầu"],
-  ["approved", "Đã duyệt"],
-  ["da_duyet", "Đã duyệt"],
-  ["dang_xu_ly", "Đang xử lý"],
-  ["in_progress", "Đang xử lý"],
-  ["cho_linh_kien", "Chờ linh kiện"],
-  ["pending_parts", "Chờ linh kiện"],
-  ["hoan_tat", "Hoàn tất"],
-  ["completed", "Hoàn tất"],
-  ["huy", "Huỷ"],
-  ["huy_bo", "Huỷ"],
-  ["canceled", "Huỷ"],
-  ["cancelled", "Huỷ"],
+// Từ điển trạng thái dạng "chuẩn hoá key" <-> "label"
+const STATUS_ALIASES = new Map([
+  ["duoc_yeu_cau", "requested"],
+  ["requested", "requested"],
+  ["approved", "approved"],
+  ["da_duyet", "approved"],
+  ["dang_xu_ly", "in_progress"],
+  ["in_progress", "in_progress"],
+  ["cho_linh_kien", "pending_parts"],
+  ["pending_parts", "pending_parts"],
+  ["hoan_tat", "completed"],
+  ["completed", "completed"],
+  ["huy", "canceled"],
+  ["huy_bo", "canceled"],
+  ["canceled", "canceled"],
+  ["cancelled", "canceled"],
 ]);
 
-const SEVERITY_MAP = new Map([
-  ["thap", "Thấp"],
-  ["low", "Thấp"],
-  ["trung_binh", "Trung bình"],
-  ["medium", "Trung bình"],
-  ["cao", "Cao"],
-  ["high", "Cao"],
-  ["khan", "Khẩn"],
-  ["khan_cap", "Khẩn"],
-  ["critical", "Khẩn"],
-]);
-
-const PRIORITY_MAP = new Map([
-  ["thap", "Thấp"],
-  ["low", "Thấp"],
-  ["binh_thuong", "Bình thường"],
-  ["binhthuong", "Bình thường"],
-  ["normal", "Bình thường"],
-  ["cao", "Cao"],
-  ["high", "Cao"],
-  ["urgent", "Cao"],
-]);
-
-const ensureEnum = (value, dictionary, fallback = undefined) => {
-  if (value == null || value === "") return fallback;
-  const normalized = normalizeKey(value);
-  if (dictionary.has(normalized)) {
-    return dictionary.get(normalized);
-  }
-  return fallback;
+const STATUS_LABELS = {
+  requested: "Được yêu cầu",
+  approved: "Đã duyệt",
+  in_progress: "Đang xử lý",
+  pending_parts: "Chờ linh kiện",
+  completed: "Hoàn tất",
+  canceled: "Huỷ",
 };
 
+const STATUS_DICT = {
+  defaultKey: "requested",
+  toCanonical: (val, fallback = "requested") => {
+    if (!val) return fallback;
+    const key = STATUS_ALIASES.get(normalizeKey(val));
+    return key || fallback;
+  },
+  getLabel: (key, fallbackLabel = null) => STATUS_LABELS[key] || fallbackLabel || key,
+};
+
+// Đọc enum values trong Model (nếu cột là ENUM)
 const getEnumValues = (model, attribute) =>
   (model?.rawAttributes?.[attribute]?.values || []).slice();
 
@@ -132,9 +116,7 @@ const alignEnumValue = (enumValues, candidate, fallback = candidate) => {
   if (!candidate) return fallback;
   const normalized = normalizeKey(candidate);
   for (const value of enumValues || []) {
-    if (normalizeKey(value) === normalized) {
-      return value;
-    }
+    if (normalizeKey(value) === normalized) return value;
   }
   return fallback;
 };
@@ -145,50 +127,81 @@ const PRIORITY_ENUM_VALUES = getEnumValues(RepairRequest, "priority");
 
 const CANCELED_VALUE = alignEnumValue(
   STATUS_ENUM_VALUES,
-  STATUS_MAP.get("canceled") || "canceled",
-  STATUS_MAP.get("canceled") || "canceled",
+  STATUS_DICT.getLabel("canceled") || "canceled",
+  STATUS_DICT.getLabel("canceled") || "canceled"
 );
 
 const DEFAULT_STATUS = alignEnumValue(
   STATUS_ENUM_VALUES,
-  STATUS_MAP.get("requested") || STATUS_ENUM_VALUES[0],
-  STATUS_MAP.get("requested") || STATUS_ENUM_VALUES[0],
+  STATUS_DICT.getLabel("requested") || STATUS_ENUM_VALUES[0],
+  STATUS_DICT.getLabel("requested") || STATUS_ENUM_VALUES[0]
 );
 
 const DEFAULT_SEVERITY = alignEnumValue(
   SEVERITY_ENUM_VALUES,
   SEVERITY_MAP.get("medium") || SEVERITY_ENUM_VALUES[0],
-  SEVERITY_MAP.get("medium") || SEVERITY_ENUM_VALUES[0],
+  SEVERITY_MAP.get("medium") || SEVERITY_ENUM_VALUES[0]
 );
 
 const DEFAULT_PRIORITY = alignEnumValue(
   PRIORITY_ENUM_VALUES,
   PRIORITY_MAP.get("normal") || PRIORITY_ENUM_VALUES[0],
-  PRIORITY_MAP.get("normal") || PRIORITY_ENUM_VALUES[0],
+  PRIORITY_MAP.get("normal") || PRIORITY_ENUM_VALUES[0]
 );
+
+// Thêm label VN vào response + giữ key chuẩn cho status
+const formatEnumsForResponse = (row) => {
+  const statusKey = STATUS_DICT.toCanonical(row.status, row.status);
+  return {
+    ...row,
+    status: statusKey,
+    status_label: STATUS_DICT.getLabel(statusKey, row.status),
+    severity_label: ensureEnum(row.severity, SEVERITY_MAP, row.severity),
+    priority_label: ensureEnum(row.priority, PRIORITY_MAP, row.priority),
+  };
+};
+
+const yyyyMM = (d) => {
+  const dt = new Date(d);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+};
+
+/* =================== Controllers =================== */
 
 const listRepairs = async (req, res) => {
   try {
     const { q, status, severity, includeCanceled } = req.query;
 
-    const excludeCanceled = !includeCanceled || includeCanceled === "0" || includeCanceled === 0;
-    const canceledDbValue = getCanceledDbValue();
+    const excludeCanceled =
+      !includeCanceled || includeCanceled === "0" || includeCanceled === 0;
 
-    // ----- where cho RepairRequest -----
+    // where cho RepairRequest
     const where = {};
-    // Ẩn ticket "canceled" mặc định, muốn xem cả thì truyền ?includeCanceled=1
-    if (!includeCanceled || includeCanceled === "0") {
-      where.status = { [Op.ne]: CANCELED_VALUE };
+    let resolvedStatusForFilter = null;
+
+    // Ẩn "canceled" mặc định
+    if (excludeCanceled) {
+      if (!where.status) where.status = {};
+      where.status[Op.ne] = CANCELED_VALUE;
     }
+
     if (status && status !== "all") {
-      const resolvedStatus = ensureEnum(status, STATUS_MAP);
-      if (resolvedStatus) where.status = resolvedStatus;
+      const resolvedStatusLabel = ensureEnum(status, STATUS_MAP);
+      if (resolvedStatusLabel) {
+        // nếu cột trong DB lưu theo label VN hoặc theo enum giá trị tiếng Anh,
+        // ta vẫn filter bằng LIKE không phân biệt hoa thường để an toàn
+        resolvedStatusForFilter = resolvedStatusLabel;
+        where.status = { [Op.iLike]: resolvedStatusLabel };
+      }
     }
 
     if (severity && severity !== "all") {
       const resolvedSeverity = ensureEnum(severity, SEVERITY_MAP);
-      if (resolvedSeverity) where.severity = resolvedSeverity;
+      if (resolvedSeverity) where.severity = { [Op.iLike]: resolvedSeverity };
     }
+
     if (q) {
       where[Op.or] = [
         { title: { [Op.iLike]: `%${q}%` } },
@@ -200,18 +213,19 @@ const listRepairs = async (req, res) => {
       where,
       order: [["date_reported", "DESC"]],
       include: [
-        // required:true = INNER JOIN để loại record mồ côi device
         { model: Devices, as: "Device", attributes: ["id_devices", "name_devices"], required: true },
         { model: User, as: "Reporter", attributes: ["id_users", "username"] },
       ],
     });
 
+    // Nếu excludeCanceled và không filter status cụ thể, lọc thêm ở tầng app (phòng khi DB lưu khác case)
     const cancelKey = normalizeKey(CANCELED_VALUE || "canceled");
-    const filteredRows = excludeCanceled && !resolvedStatusForFilter
-      ? rows.filter((row) => normalizeKey(row.status) !== cancelKey)
-      : rows;
+    const filteredRows =
+      excludeCanceled && !resolvedStatusForFilter
+        ? rows.filter((row) => normalizeKey(row.status) !== cancelKey)
+        : rows;
 
-    // ----- chi tiết: dùng [Op.in] khi query theo mảng id -----
+    // Lấy detail theo mảng id
     const ids = filteredRows.map((r) => r.id_repair);
     let detailsMap = new Map();
     if (ids.length) {
@@ -225,9 +239,7 @@ const listRepairs = async (req, res) => {
       detailsMap = new Map(details.map((d) => [d.id_repair, d.toJSON()]));
     }
 
-    // ----- map data trả về -----
     const num = (v) => Number(v || 0);
-
     const data = filteredRows.map((instance) => {
       const r = instance.toJSON();
       const d = detailsMap.get(r.id_repair) || {};
@@ -263,7 +275,7 @@ const listRepairs = async (req, res) => {
       });
     });
 
-    // ----- chống cache ở mọi tầng -----
+    // Chống cache
     res.set("Cache-Control", "no-store, max-age=0");
     res.set("Pragma", "no-cache");
 
@@ -274,16 +286,14 @@ const listRepairs = async (req, res) => {
   }
 };
 
-/** ====== GET /api/repairs/:id  (an toàn, không NaN) ====== */
+/** GET /api/repairs/:id */
 const getRepair = async (req, res) => {
   try {
-    // id đến từ params (đã được ràng buộc chỉ là số ở routes)
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
       return res.status(400).json({ message: "Invalid id_repair" });
     }
 
-    // Lấy ticket + device + reporter/approver
     const ticket = await RepairRequest.findByPk(id, {
       include: [
         { model: Devices, as: "Device", attributes: ["id_devices", "name_devices"] },
@@ -292,11 +302,8 @@ const getRepair = async (req, res) => {
       ],
     });
 
-    if (!ticket) {
-      return res.status(404).json({ message: "Ticket not found" });
-    }
+    if (!ticket) return res.status(404).json({ message: "Ticket not found" });
 
-    // Lấy detail, vendor (nếu có)
     const detail = await RepairDetail.findOne({
       where: { id_repair: id },
       include: [
@@ -305,25 +312,20 @@ const getRepair = async (req, res) => {
       ],
     });
 
-    // Lấy history/parts/files
     const [history, parts, files] = await Promise.all([
       RepairHistory.findAll({
         where: { id_repair: id },
         order: [["created_at", "ASC"]],
-        include: [{ model: User, attributes: ["id_users", "username"], foreignKey: "actor_user" }],
+        include: [{ model: User, attributes: ["id_users", "username"] }],
       }),
-      RepairPartUsed.findAll({
-        where: { id_repair: id },
-        order: [["id_part_used", "ASC"]],
-      }),
+      RepairPartUsed.findAll({ where: { id_repair: id }, order: [["id_part_used", "ASC"]] }),
       RepairFiles.findAll({
         where: { id_repair: id },
         order: [["uploaded_at", "ASC"]],
-        include: [{ model: User, attributes: ["id_users", "username"], foreignKey: "uploaded_by" }],
+        include: [{ model: User, attributes: ["id_users", "username"] }],
       }),
     ]);
 
-    // Chống cache
     res.set("Cache-Control", "no-store, max-age=0");
     res.set("Pragma", "no-cache");
 
@@ -366,21 +368,14 @@ const getRepair = async (req, res) => {
         new_status_label: STATUS_DICT.getLabel(newStatusKey, row.new_status),
       };
     });
-    historyJson.forEach((entry) => {
-      delete entry.User;
-    });
+    historyJson.forEach((entry) => delete entry.User);
 
     const partsJson = parts.map((p) => p.toJSON());
     const filesJson = files.map((f) => {
       const row = f.toJSON();
-      return {
-        ...row,
-        uploader_name: row.User?.username || null,
-      };
+      return { ...row, uploader_name: row.User?.username || null };
     });
-    filesJson.forEach((file) => {
-      delete file.User;
-    });
+    filesJson.forEach((file) => delete file.User);
 
     return res.json({
       ticket: ticketPayload,
@@ -390,20 +385,12 @@ const getRepair = async (req, res) => {
       files: filesJson,
     });
   } catch (e) {
-    console.error("getRepairSafe error:", e);
+    console.error("getRepair error:", e);
     return res.status(500).json({ message: "Server error", error: e?.message || String(e) });
   }
 };
 
-/** ====== GET /api/repairs/summary  (an toàn, không join phức tạp) ====== */
-const yyyyMM = (d) => {
-  const dt = new Date(d);
-  const y = dt.getFullYear();
-  const m = String(dt.getMonth() + 1).padStart(2, "0");
-  return `${y}-${m}`;
-};
-
-
+/** POST /api/repairs (create) */
 const createRequest = async (req, res) => {
   const t = await sequelize.transaction();
   try {
@@ -423,29 +410,35 @@ const createRequest = async (req, res) => {
     const resolvedPriority = ensureEnum(priority, PRIORITY_MAP, "Bình thường");
     const resolvedStatus = ensureEnum("requested", STATUS_MAP, "Được yêu cầu");
 
-    const r = await RepairRequest.create({
-      id_devices,
-      reported_by,
-      title,
-      issue_description,
-      severity: resolvedSeverity,
-      priority: resolvedPriority,
-      status: resolvedStatus,
-      date_reported: new Date(),
-      sla_hours,
-      date_down,
-      expected_date,
-      last_updated: new Date(),
-    }, { transaction: t });
+    const r = await RepairRequest.create(
+      {
+        id_devices,
+        reported_by,
+        title,
+        issue_description,
+        severity: resolvedSeverity,
+        priority: resolvedPriority,
+        status: resolvedStatus,
+        date_reported: new Date(),
+        sla_hours,
+        date_down,
+        expected_date,
+        last_updated: new Date(),
+      },
+      { transaction: t }
+    );
 
-    await RepairHistory.create({
-      id_repair: r.id_repair,
-      actor_user: reported_by,
-      old_status: null,
-      new_status: resolvedStatus,
-      note: "Created ticket",
-      created_at: new Date(),
-    }, { transaction: t });
+    await RepairHistory.create(
+      {
+        id_repair: r.id_repair,
+        actor_user: reported_by,
+        old_status: null,
+        new_status: resolvedStatus,
+        note: "Created ticket",
+        created_at: new Date(),
+      },
+      { transaction: t }
+    );
 
     await t.commit();
     res.status(201).json({ id_repair: r.id_repair });
@@ -456,6 +449,7 @@ const createRequest = async (req, res) => {
   }
 };
 
+/** PATCH /api/repairs/:id/status */
 const updateStatus = async (req, res) => {
   const t = await sequelize.transaction();
   try {
@@ -471,14 +465,17 @@ const updateStatus = async (req, res) => {
     r.last_updated = new Date();
     await r.save({ transaction: t });
 
-    await RepairHistory.create({
-      id_repair: id,
-      actor_user,
-      old_status,
-      new_status: resolvedStatus,
-      note: note || null,
-      created_at: new Date(),
-    }, { transaction: t });
+    await RepairHistory.create(
+      {
+        id_repair: id,
+        actor_user,
+        old_status,
+        new_status: resolvedStatus,
+        note: note || null,
+        created_at: new Date(),
+      },
+      { transaction: t }
+    );
 
     await t.commit();
     res.json({ ok: true });
@@ -489,10 +486,11 @@ const updateStatus = async (req, res) => {
   }
 };
 
+/** PUT /api/repairs/:id/detail (upsert) */
 const upsertDetail = async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const payload = req.body; // {repair_type, technician_user, id_vendor, start_time, end_time, total_labor_hours, labor_cost, parts_cost, other_cost, outcome, warranty_extend_mon, next_maintenance_date}
+    const payload = req.body;
     const [detail] = await RepairDetail.upsert({ id_repair: id, ...payload });
     res.json({ ok: true, id_repair_detail: detail.id_repair_detail });
   } catch (e) {
@@ -501,6 +499,7 @@ const upsertDetail = async (req, res) => {
   }
 };
 
+/** POST /api/repairs/:id/parts (bulk add) */
 const addPart = async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -514,7 +513,7 @@ const addPart = async (req, res) => {
         unit_cost: p.unit_cost || 0,
         supplier_name: p.supplier_name || null,
         note: p.note || null,
-      })),
+      }))
     );
     res.status(201).json({ count: created.length });
   } catch (e) {
@@ -523,11 +522,12 @@ const addPart = async (req, res) => {
   }
 };
 
+/** POST /api/repairs/:id/files (multer upload) */
 const uploadFiles = async (req, res) => {
   try {
     const id = Number(req.params.id);
     const uploaded_by = Number(req.body.uploaded_by) || null;
-    const files = (req.files || []).map(f => ({
+    const files = (req.files || []).map((f) => ({
       id_repair: id,
       file_path: f.path.replace(/\\/g, "/"),
       file_name: f.filename,
@@ -543,7 +543,7 @@ const uploadFiles = async (req, res) => {
   }
 };
 
-// Tổng hợp an toàn, không join phức tạp để tránh lỗi dialect/association
+/** GET /api/repairs/summary (safe, không join phức tạp) */
 const getSummaryStatsSafe = async (req, res) => {
   try {
     const requests = await RepairRequest.findAll({
@@ -594,6 +594,7 @@ const getSummaryStatsSafe = async (req, res) => {
     return res.status(500).json({ message: "Summary error", error: e?.message || String(e) });
   }
 };
+
 module.exports = {
   listRepairs,
   updateStatus,

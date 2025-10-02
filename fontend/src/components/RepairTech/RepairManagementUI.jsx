@@ -19,6 +19,7 @@ import { Skeleton } from "../ui/skeleton";
 
 import KPI from "./KPI";
 import TicketSheet from "./TicketSheet";
+import STATUS_META, { resolveStatusMeta } from "./statusMeta";
 import { listRepairs, getSummaryStats } from "../../services/repairsApi";
 
 
@@ -77,15 +78,7 @@ const cleanTickets = (arr = []) => {
     });
 };
 // -----------------------------
-
-const STATUS_MAP = {
-  requested: { label: "Requested", color: "bg-slate-200 text-slate-700" },
-  approved: { label: "Approved", color: "bg-blue-100 text-blue-700" },
-  in_progress: { label: "In progress", color: "bg-amber-100 text-amber-700" },
-  pending_parts: { label: "Pending parts", color: "bg-violet-100 text-violet-700" },
-  completed: { label: "Completed", color: "bg-emerald-100 text-emerald-700" },
-  canceled: { label: "Canceled", color: "bg-rose-100 text-rose-700" },
-};
+const STATUS_OPTIONS = Object.keys(STATUS_META);
 
 export default function RepairManagementUI() {
   // filters
@@ -152,10 +145,13 @@ export default function RepairManagementUI() {
           month: item.month,
           cost: Number(item.cost) || 0,
         })));
-        const dist = (s?.status || []).map((x) => ({
-          name: STATUS_MAP[x.name]?.label || x.name,
-          value: Number(x.value) || 0,
-        }));
+        const dist = (s?.status || []).map((x) => {
+          const meta = resolveStatusMeta(x.name, x.label);
+          return {
+            name: meta.label,
+            value: Number(x.value) || 0,
+          };
+        });
         setChartStatus(dist);
       })
       .catch((err) => {
@@ -245,11 +241,14 @@ export default function RepairManagementUI() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Tất cả trạng thái</SelectItem>
-                  {Object.keys(STATUS_MAP).map((k) => (
-                    <SelectItem key={k} value={k}>
-                      {STATUS_MAP[k].label}
-                    </SelectItem>
-                  ))}
+                  {STATUS_OPTIONS.map((key) => {
+                    const meta = resolveStatusMeta(key);
+                    return (
+                      <SelectItem key={key} value={key}>
+                        {meta.label}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
               <Select value={severity} onValueChange={setSeverity}>
@@ -399,8 +398,10 @@ export default function RepairManagementUI() {
                       </tr>
                     ))}
                   {!loading &&
-                    tickets.map((t) => (
-                      <tr key={t.id_repair} className="border-b hover:bg-slate-50/70 dark:hover:bg-slate-800/30">
+                    tickets.map((t) => {
+                      const statusMeta = resolveStatusMeta(t.status, t.status_label);
+                      return (
+                        <tr key={t.id_repair} className="border-b hover:bg-slate-50/70 dark:hover:bg-slate-800/30">
                         <td className="py-3 pr-3 font-medium">#{t.id_repair}</td>
                         <td className="py-3 pr-3">
                           <div className="font-medium">{t.device_name}</div>
@@ -440,8 +441,9 @@ export default function RepairManagementUI() {
                             Chi tiết
                           </Button>
                         </td>
-                      </tr>
-                    ))}
+                        </tr>
+                      );
+                    })}
                   {!loading && tickets.length === 0 && (
                     <tr>
                       <td colSpan={11} className="py-3 text-slate-500">
