@@ -51,8 +51,9 @@ const RepairDetail = sequelize.define(
       validate: { min: 0 },
     },
     outcome: {
-      type: DataTypes.ENUM("Đã sửa", "Tạm dùng", "Không sửa được", "Đổi thiết bị"),
-      defaultValue: "Đã sửa",
+      type: DataTypes.STRING(255),
+      allowNull: false,
+      
     },
     warranty_extend_mon: { type: DataTypes.INTEGER, defaultValue: 0, validate: { min: 0 } },
     next_maintenance_date: { type: DataTypes.DATE },

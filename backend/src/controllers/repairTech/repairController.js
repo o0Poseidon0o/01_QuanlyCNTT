@@ -12,7 +12,7 @@ const Devices = require("../../models/Techequipment/devices");
 const User = require("../../models/Users/User");
 const RepairVendor = require("../../models/RepairTech/repairVendor");
 
-/* =================== Helpers: chuẩn hoá & từ điển enum =================== */
+/* =================== Helpers =================== */
 const normalizeKey = (value) =>
   String(value ?? "")
     .normalize("NFD")
@@ -20,6 +20,15 @@ const normalizeKey = (value) =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
+
+const toInt = (v) => {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : null;
+};
+const toNum = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
 
 // Map alias -> Nhãn (tiếng Việt)
 const STATUS_MAP = new Map([
@@ -125,6 +134,30 @@ const STATUS_ENUM_VALUES = getEnumValues(RepairRequest, "status");
 const SEVERITY_ENUM_VALUES = getEnumValues(RepairRequest, "severity");
 const PRIORITY_ENUM_VALUES = getEnumValues(RepairRequest, "priority");
 
+// 🔸 REPAIR_TYPE enum trong DB (ví dụ: "Nội bộ" | "Bên ngoài")
+const REPAIR_TYPE_ENUM_VALUES = getEnumValues(RepairDetail, "repair_type");
+
+// alias nhóm vendor/internal
+const VENDOR_ALIASES = new Set(["vendor", "external", "ben_ngoai", "ngoai", "outsourced", "outsource"]);
+const INTERNAL_ALIASES = new Set(["internal", "inhouse", "noi_bo", "noibo"]);
+
+const resolveRepairTypeEnumValue = (raw, { id_vendor } = {}) => {
+  let key = normalizeKey(raw || "");
+  if (!key) key = toInt(id_vendor) ? "vendor" : "internal";
+  const wantVendor = VENDOR_ALIASES.has(key);
+
+  if (REPAIR_TYPE_ENUM_VALUES && REPAIR_TYPE_ENUM_VALUES.length) {
+    for (const ev of REPAIR_TYPE_ENUM_VALUES) {
+      const nev = normalizeKey(ev);
+      if (wantVendor && VENDOR_ALIASES.has(nev)) return ev;   // "Bên ngoài"
+      if (!wantVendor && INTERNAL_ALIASES.has(nev)) return ev; // "Nội bộ"
+    }
+    // fallback
+    return REPAIR_TYPE_ENUM_VALUES[0];
+  }
+  return wantVendor ? "vendor" : "internal";
+};
+
 const CANCELED_VALUE = alignEnumValue(
   STATUS_ENUM_VALUES,
   STATUS_DICT.getLabel("canceled") || "canceled",
@@ -168,20 +201,137 @@ const yyyyMM = (d) => {
   return `${y}-${m}`;
 };
 
+/* ============ Small helpers dùng lại cho các list/search ============ */
+const buildWhereFromCommonQuery = (query, { defaultExcludeCanceled = true } = {}) => {
+  const {
+    q,
+    status,
+    severity,
+    priority,
+    reported_by,
+    id_devices,
+    includeCanceled,
+    from,
+    to,
+  } = query || {};
+
+  const where = {};
+
+  const excludeCanceled =
+    defaultExcludeCanceled &&
+    (!includeCanceled || includeCanceled === "0" || includeCanceled === 0);
+
+  if (excludeCanceled) {
+    if (!where.status) where.status = {};
+    where.status[Op.ne] = CANCELED_VALUE;
+  }
+
+  if (status && status !== "all") {
+    const resolvedStatusLabel = ensureEnum(status, STATUS_MAP);
+    if (resolvedStatusLabel) {
+      where.status = { [Op.iLike]: resolvedStatusLabel };
+    } else {
+      // cũng chấp nhận key (requested/in_progress/...)
+      const key = STATUS_DICT.toCanonical(status, null);
+      if (key) where.status = { [Op.iLike]: STATUS_DICT.getLabel(key, key) };
+    }
+  }
+
+  if (severity && severity !== "all") {
+    const resolvedSeverity = ensureEnum(severity, SEVERITY_MAP);
+    if (resolvedSeverity) where.severity = { [Op.iLike]: resolvedSeverity };
+  }
+
+  if (priority && priority !== "all") {
+    const resolvedPriority = ensureEnum(priority, PRIORITY_MAP);
+    if (resolvedPriority) where.priority = { [Op.iLike]: resolvedPriority };
+  }
+
+  if (reported_by) where.reported_by = reported_by;
+  if (id_devices) where.id_devices = id_devices;
+
+  if (from || to) {
+    where.date_reported = {};
+    if (from) where.date_reported[Op.gte] = new Date(from);
+    if (to) where.date_reported[Op.lte] = new Date(to);
+  }
+
+  if (q) {
+    where[Op.or] = [
+      { title: { [Op.iLike]: `%${q}%` } },
+      { issue_description: { [Op.iLike]: `%${q}%` } },
+    ];
+  }
+
+  return where;
+};
+
+const fetchDetailsMapByIds = async (ids) => {
+  if (!ids?.length) return new Map();
+  const details = await RepairDetail.findAll({
+    where: { id_repair: { [Op.in]: ids } },
+    include: [
+      { model: RepairVendor, attributes: ["id_vendor", "vendor_name", "phone", "email"] },
+      { model: User, as: "Technician", attributes: ["id_users", "username"] },
+    ],
+  });
+  return new Map(details.map((d) => [d.id_repair, d.toJSON()]));
+};
+
+const hydrateRowsForList = async (rows) => {
+  const num = (v) => Number(v || 0);
+  const ids = rows.map((r) => r.id_repair);
+  const detailsMap = await fetchDetailsMapByIds(ids);
+
+  return rows.map((instance) => {
+    const r = instance.toJSON();
+    const d = detailsMap.get(r.id_repair) || {};
+    const technicianName = d.Technician?.username || null;
+    const total_cost = num(d.labor_cost) + num(d.parts_cost) + num(d.other_cost);
+
+    return formatEnumsForResponse({
+      id_repair: r.id_repair,
+      device_name: r.Device?.name_devices || "",
+      device_code: r.id_devices,
+      title: r.title,
+      issue_description: r.issue_description,
+      severity: r.severity,
+      priority: r.priority,
+      status: r.status,
+      date_reported: r.date_reported,
+      sla_hours: r.sla_hours,
+      reporter_id: r.reported_by,
+      reporter_name: r.Reporter?.username || null,
+      assignee: technicianName || d.technician_user || null,
+      vendor_id: d.id_vendor || null,
+      vendor_name: d.RepairVendor?.vendor_name || null,
+      repair_type: d.repair_type || null,
+      start_time: d.start_time || null,
+      end_time: d.end_time || null,
+      total_labor_hours: d.total_labor_hours || null,
+      labor_cost: num(d.labor_cost),
+      parts_cost: num(d.parts_cost),
+      other_cost: num(d.other_cost),
+      outcome: d.outcome || null,
+      warranty_extend_mon: d.warranty_extend_mon || null,
+      next_maintenance_date: d.next_maintenance_date || null,
+      total_cost,
+    });
+  });
+};
+
 /* =================== Controllers =================== */
 
+// (Giữ nguyên) GET /api/repairs  — filter nhẹ
 const listRepairs = async (req, res) => {
   try {
     const { q, status, severity, includeCanceled } = req.query;
 
-    const excludeCanceled =
-      !includeCanceled || includeCanceled === "0" || includeCanceled === 0;
+    const excludeCanceled = !includeCanceled || includeCanceled === "0" || includeCanceled === 0;
 
-    // where cho RepairRequest
     const where = {};
     let resolvedStatusForFilter = null;
 
-    // Ẩn "canceled" mặc định
     if (excludeCanceled) {
       if (!where.status) where.status = {};
       where.status[Op.ne] = CANCELED_VALUE;
@@ -190,8 +340,6 @@ const listRepairs = async (req, res) => {
     if (status && status !== "all") {
       const resolvedStatusLabel = ensureEnum(status, STATUS_MAP);
       if (resolvedStatusLabel) {
-        // nếu cột trong DB lưu theo label VN hoặc theo enum giá trị tiếng Anh,
-        // ta vẫn filter bằng LIKE không phân biệt hoa thường để an toàn
         resolvedStatusForFilter = resolvedStatusLabel;
         where.status = { [Op.iLike]: resolvedStatusLabel };
       }
@@ -218,71 +366,126 @@ const listRepairs = async (req, res) => {
       ],
     });
 
-    // Nếu excludeCanceled và không filter status cụ thể, lọc thêm ở tầng app (phòng khi DB lưu khác case)
     const cancelKey = normalizeKey(CANCELED_VALUE || "canceled");
     const filteredRows =
       excludeCanceled && !resolvedStatusForFilter
         ? rows.filter((row) => normalizeKey(row.status) !== cancelKey)
         : rows;
 
-    // Lấy detail theo mảng id
-    const ids = filteredRows.map((r) => r.id_repair);
-    let detailsMap = new Map();
-    if (ids.length) {
-      const details = await RepairDetail.findAll({
-        where: { id_repair: { [Op.in]: ids } },
-        include: [
-          { model: RepairVendor, attributes: ["id_vendor", "vendor_name", "phone", "email"] },
-          { model: User, as: "Technician", attributes: ["id_users", "username"] },
-        ],
-      });
-      detailsMap = new Map(details.map((d) => [d.id_repair, d.toJSON()]));
-    }
+    const data = await hydrateRowsForList(filteredRows);
 
-    const num = (v) => Number(v || 0);
-    const data = filteredRows.map((instance) => {
-      const r = instance.toJSON();
-      const d = detailsMap.get(r.id_repair) || {};
-      const technicianName = d.Technician?.username || null;
-      const total_cost = num(d.labor_cost) + num(d.parts_cost) + num(d.other_cost);
-      return formatEnumsForResponse({
-        id_repair: r.id_repair,
-        device_name: r.Device?.name_devices || "",
-        device_code: r.id_devices,
-        title: r.title,
-        issue_description: r.issue_description,
-        severity: r.severity,
-        priority: r.priority,
-        status: r.status,
-        date_reported: r.date_reported,
-        sla_hours: r.sla_hours,
-        reporter_id: r.reported_by,
-        reporter_name: r.Reporter?.username || null,
-        assignee: technicianName || d.technician_user || null,
-        vendor_id: d.id_vendor || null,
-        vendor_name: d.RepairVendor?.vendor_name || null,
-        repair_type: d.repair_type || null,
-        start_time: d.start_time || null,
-        end_time: d.end_time || null,
-        total_labor_hours: d.total_labor_hours || null,
-        labor_cost: num(d.labor_cost),
-        parts_cost: num(d.parts_cost),
-        other_cost: num(d.other_cost),
-        outcome: d.outcome || null,
-        warranty_extend_mon: d.warranty_extend_mon || null,
-        next_maintenance_date: d.next_maintenance_date || null,
-        total_cost,
-      });
-    });
-
-    // Chống cache
     res.set("Cache-Control", "no-store, max-age=0");
     res.set("Pragma", "no-cache");
-
     return res.json(data);
   } catch (e) {
     console.error("listRepairs error:", e);
     return res.status(500).json({ message: "Server error", detail: e?.message || undefined });
+  }
+};
+
+/* ==== MỚI ====  GET /api/repairs/all  */
+const listAllRepairs = async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page || "1", 10));
+    const limit = Math.max(1, Math.min(500, parseInt(req.query.limit || "200", 10)));
+    const offset = (page - 1) * limit;
+
+    const where = buildWhereFromCommonQuery(req.query, { defaultExcludeCanceled: true });
+
+    const { rows, count } = await RepairRequest.findAndCountAll({
+      where,
+      include: [
+        { model: Devices, as: "Device", attributes: ["id_devices", "name_devices"], required: true },
+        { model: User, as: "Reporter", attributes: ["id_users", "username"] },
+      ],
+      order: [["date_reported", "DESC"]],
+      limit,
+      offset,
+    });
+
+    const data = await hydrateRowsForList(rows);
+
+    res.set("Cache-Control", "no-store, max-age=0");
+    res.set("Pragma", "no-cache");
+    return res.json({ page, limit, total: count, repairs: data });
+  } catch (e) {
+    console.error("listAllRepairs error:", e);
+    return res.status(500).json({ message: "Server error", error: e?.message });
+  }
+};
+
+/* ==== MỚI ====  GET /api/repairs/search */
+const searchRepairs = async (req, res) => {
+  try {
+    // Hỗ trợ: id_repair, reported_by, id_devices, status, severity, priority, q, from, to
+    const { id_repair } = req.query;
+
+    const where = buildWhereFromCommonQuery(req.query, { defaultExcludeCanceled: true });
+
+    // Nếu truyền id_repair thì ưu tiên nó (nhưng KHÔNG bắt buộc phải có)
+    if (id_repair != null && id_repair !== "") {
+      const id = toInt(id_repair);
+      if (!id) return res.status(400).json({ message: "Invalid id_repair" });
+      where.id_repair = id;
+    }
+
+    const rows = await RepairRequest.findAll({
+      where,
+      include: [
+        { model: Devices, as: "Device", attributes: ["id_devices", "name_devices"], required: true },
+        { model: User, as: "Reporter", attributes: ["id_users", "username"] },
+      ],
+      order: [["date_reported", "DESC"]],
+      limit: Math.max(1, Math.min(500, parseInt(req.query.limit || "200", 10))),
+    });
+
+    const data = await hydrateRowsForList(rows);
+
+    // Nếu chỉ tìm theo id_repair: trả object hoặc null
+    if (req.query.id_repair != null && req.query.id_repair !== "") {
+      return res.json(data.length ? data[0] : null);
+    }
+    return res.json({ repairs: data });
+  } catch (e) {
+    console.error("searchRepairs error:", e);
+    return res.status(500).json({ message: "Server error", error: e?.message });
+  }
+};
+
+/* ==== MỚI ====  GET /api/repairs/user/:id */
+const listRepairsByUser = async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+    if (!id) return res.status(400).json({ message: "Invalid user id" });
+
+    const page = Math.max(1, parseInt(req.query.page || "1", 10));
+    const limit = Math.max(1, Math.min(500, parseInt(req.query.limit || "200", 10)));
+    const offset = (page - 1) * limit;
+
+    const baseWhere = buildWhereFromCommonQuery(
+      { ...req.query, reported_by: id },
+      { defaultExcludeCanceled: true }
+    );
+
+    const { rows, count } = await RepairRequest.findAndCountAll({
+      where: baseWhere,
+      include: [
+        { model: Devices, as: "Device", attributes: ["id_devices", "name_devices"], required: true },
+        { model: User, as: "Reporter", attributes: ["id_users", "username"] },
+      ],
+      order: [["date_reported", "DESC"]],
+      limit,
+      offset,
+    });
+
+    const data = await hydrateRowsForList(rows);
+
+    res.set("Cache-Control", "no-store, max-age=0");
+    res.set("Pragma", "no-cache");
+    return res.json({ page, limit, total: count, repairs: data });
+  } catch (e) {
+    console.error("listRepairsByUser error:", e);
+    return res.status(500).json({ message: "Server error", error: e?.message });
   }
 };
 
@@ -450,7 +653,6 @@ const createRequest = async (req, res) => {
 };
 
 /** PATCH /api/repairs/:id/status */
-// PATCH /api/repairs/:id/status
 const updateStatus = async (req, res) => {
   const t = await sequelize.transaction();
   try {
@@ -475,7 +677,7 @@ const updateStatus = async (req, res) => {
       transaction: t,
     });
 
-    // 3) Resolve status theo map hiện có (giữ nguyên cách bạn đang dùng)
+    // 3) Resolve status
     const old_status = r.status;
     const resolvedStatus = ensureEnum(new_status, STATUS_MAP, old_status) || old_status;
 
@@ -483,12 +685,7 @@ const updateStatus = async (req, res) => {
     r.last_updated = new Date();
     await r.save({ transaction: t });
 
-    // 4) Chọn actor_user HỢP LỆ bằng id_users trong tb_users
-    const toInt = (v) => {
-      const n = Number(v);
-      return Number.isInteger(n) && n > 0 ? n : null;
-    };
-
+    // 4) Chọn actor_user hợp lệ theo id_users
     const findExistingUserId = async (userId) => {
       const v = toInt(userId);
       if (!v) return null;
@@ -500,13 +697,12 @@ const updateStatus = async (req, res) => {
       return u ? v : null;
     };
 
-    // danh sách ứng viên theo thứ tự ưu tiên
     const candidates = [
-      req.body?.actor_user,            // nếu FE còn gửi, chỉ dùng khi tồn tại thật
-      detail?.technician_user,         // kỹ thuật viên gán trong chi tiết
-      detail?.technician_id,           // nếu bạn đặt tên cột khác
-      r.reported_by,                   // người báo cáo
-      r.approved_by,                   // người duyệt (nếu có)
+      req.body?.actor_user,
+      detail?.technician_user,
+      detail?.technician_id,
+      r.reported_by,
+      r.approved_by,
     ].filter((x) => x != null);
 
     let actorId = null;
@@ -515,7 +711,6 @@ const updateStatus = async (req, res) => {
       if (actorId) break;
     }
 
-    // fallback: lấy 1 user bất kỳ (đầu bảng) nếu vẫn chưa có
     if (!actorId) {
       const any = await User.findOne({
         attributes: ["id_users"],
@@ -525,7 +720,7 @@ const updateStatus = async (req, res) => {
       actorId = any?.id_users ?? null;
     }
 
-    // 5) Tạo history (chỉ set actor_user khi có id hợp lệ)
+    // 5) Tạo history
     const historyPayload = {
       id_repair: id,
       old_status,
@@ -533,7 +728,7 @@ const updateStatus = async (req, res) => {
       note: note || null,
       created_at: new Date(),
     };
-    if (actorId) historyPayload.actor_user = actorId; // nếu cột cho phép NULL, có thể bỏ qua
+    if (actorId) historyPayload.actor_user = actorId;
 
     await RepairHistory.create(historyPayload, { transaction: t });
 
@@ -546,17 +741,79 @@ const updateStatus = async (req, res) => {
   }
 };
 
-
 /** PUT /api/repairs/:id/detail (upsert) */
 const upsertDetail = async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const payload = req.body;
-    const [detail] = await RepairDetail.upsert({ id_repair: id, ...payload });
-    res.json({ ok: true, id_repair_detail: detail.id_repair_detail });
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid id_repair" });
+    }
+
+    const {
+      repair_type,
+      technician_user,
+      id_vendor,
+      total_labor_hours,
+      labor_cost,
+      parts_cost,
+      other_cost,
+      outcome,
+      start_time,
+      end_time,
+      warranty_extend_mon,
+      next_maintenance_date,
+    } = req.body || {};
+
+    // Map alias -> giá trị ENUM hợp lệ trong DB
+    const repairTypeEnum = resolveRepairTypeEnumValue(repair_type, { id_vendor });
+    const chosenIsVendor = VENDOR_ALIASES.has(normalizeKey(repairTypeEnum));
+
+    const payload = {
+      id_repair: id,
+      repair_type: repairTypeEnum,
+      technician_user: chosenIsVendor ? null : toInt(technician_user),
+      id_vendor: chosenIsVendor ? toInt(id_vendor) : null,
+      total_labor_hours: toNum(total_labor_hours),
+      labor_cost: toNum(labor_cost),
+      parts_cost: toNum(parts_cost),
+      other_cost: toNum(other_cost),
+      outcome: (outcome ?? "").toString().trim() || null,
+      start_time: start_time || null,
+      end_time: end_time || null,
+      warranty_extend_mon: toInt(warranty_extend_mon),
+      next_maintenance_date: next_maintenance_date || null,
+    };
+
+    const [detail] = await RepairDetail.upsert(payload);
+    return res.json({ ok: true, id_repair_detail: detail.id_repair_detail });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ message: "Server error" });
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+/** GET /api/repairs/options (users & vendors cho dropdown) */
+const getAssigneeVendorOptions = async (req, res) => {
+  try {
+    const [users, vendors] = await Promise.all([
+      User.findAll({
+        attributes: ["id_users", "username"],
+        order: [["username", "ASC"]],
+        limit: 500,
+      }),
+      RepairVendor.findAll({
+        attributes: ["id_vendor", "vendor_name"],
+        order: [["vendor_name", "ASC"]],
+        limit: 500,
+      }),
+    ]);
+    return res.json({
+      users: users.map((u) => ({ id: u.id_users, name: u.username })),
+      vendors: vendors.map((v) => ({ id: v.id_vendor, name: v.vendor_name })),
+    });
+  } catch (e) {
+    console.error("getAssigneeVendorOptions error:", e);
+    return res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -604,14 +861,15 @@ const uploadFiles = async (req, res) => {
   }
 };
 
-/** GET /api/repairs/summary (safe, không join phức tạp) */
+/** GET /api/repairs/summary (safe, gọn gàng) */
 const getSummaryStatsSafe = async (req, res) => {
   try {
     const requests = await RepairRequest.findAll({
-      attributes: ["id_repair", "status", "severity", "date_reported"],
+      attributes: ["id_repair", "status", "date_reported"],
       order: [["date_reported", "DESC"]],
     });
 
+    // Map id_repair -> chi phí trong RepairDetail
     const ids = requests.map((r) => r.id_repair);
     let detailsMap = new Map();
     if (ids.length) {
@@ -623,23 +881,22 @@ const getSummaryStatsSafe = async (req, res) => {
     }
 
     // Phân phối trạng thái
-    const statusMap = new Map();
+    const statusCounts = new Map();
     for (const r of requests) {
-      const key = STATUS_DICT.toCanonical(r.status, STATUS_DICT.defaultKey) || STATUS_DICT.defaultKey;
-      statusMap.set(key, (statusMap.get(key) || 0) + 1);
+      const key = STATUS_DICT.toCanonical(r.status, STATUS_DICT.defaultKey);
+      statusCounts.set(key, (statusCounts.get(key) || 0) + 1);
     }
-    const status = Array.from(statusMap.entries()).map(([key, value]) => ({
-      name: key,
-      label: STATUS_DICT.getLabel(key, key),
+    const status = Array.from(statusCounts.entries()).map(([name, value]) => ({
+      name,
+      label: STATUS_DICT.getLabel(name, name),
       value,
     }));
 
     // Chi phí theo tháng
     const monthlyMap = new Map();
-    const num = (v) => Number(v || 0);
     for (const r of requests) {
       const d = detailsMap.get(r.id_repair) || {};
-      const cost = num(d.labor_cost) + num(d.parts_cost) + num(d.other_cost);
+      const cost = toNum(d.labor_cost) + toNum(d.parts_cost) + toNum(d.other_cost);
       const bucket = yyyyMM(r.date_reported || new Date());
       monthlyMap.set(bucket, (monthlyMap.get(bucket) || 0) + cost);
     }
@@ -655,7 +912,9 @@ const getSummaryStatsSafe = async (req, res) => {
     return res.status(500).json({ message: "Summary error", error: e?.message || String(e) });
   }
 };
+
 module.exports = {
+  // cũ
   listRepairs,
   updateStatus,
   upsertDetail,
@@ -664,4 +923,10 @@ module.exports = {
   getSummaryStatsSafe,
   createRequest,
   getRepair,
+  getAssigneeVendorOptions,
+
+  // mới cho FE UserProfile
+  listAllRepairs,
+  searchRepairs,
+  listRepairsByUser,
 };

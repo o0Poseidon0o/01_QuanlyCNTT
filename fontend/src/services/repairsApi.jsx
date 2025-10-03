@@ -1,6 +1,5 @@
 // src/services/repairsApi.js
-import axios from "../lib/httpClient";
-
+import axios from "../lib/httpClient"; // ✅ dùng 1 axios instance duy nhất
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:5000/api";
 
 const normalizeKey = (value) =>
@@ -161,9 +160,7 @@ export const getRepair = async (id) => {
   const data = res.data || {};
   const ticket = data.ticket ? mapTicketFromApi(data.ticket) : null;
   const detail = data.detail ? mapTicketFromApi(data.detail) : null;
-  const history = Array.isArray(data.history)
-    ? data.history.map(mapHistoryFromApi)
-    : [];
+  const history = Array.isArray(data.history) ? data.history.map(mapHistoryFromApi) : [];
   return { ...data, ticket, detail, history };
 };
 
@@ -207,4 +204,10 @@ export const getSummaryStats = async () => {
     headers: { "Cache-Control": "no-cache" },
   });
   return mapSummaryFromApi(res.data || {});
+};
+
+// ✅ đồng bộ dùng cùng axios instance
+export const getAssigneeVendorOptions = async () => {
+  const res = await axios.get(`${API_BASE}/repairs/options`);
+  return res.data; // { users: [...], vendors: [...] }
 };

@@ -9,6 +9,9 @@ import {
   ClockIcon,
   CheckCircleIcon,
   ArrowTopRightOnSquareIcon,
+  ChartPieIcon,
+  BuildingOfficeIcon,
+  XMarkIcon,
 } from "@heroicons/react/24/outline";
 
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
@@ -19,7 +22,6 @@ import { Skeleton } from "../ui/skeleton";
 
 import KPI from "./KPI";
 import TicketSheet from "./TicketSheet";
-// ⚠️ chỉ lấy resolveStatusMeta để tránh unused import
 import { resolveStatusMeta } from "./statusMeta";
 import { listRepairs, getSummaryStats } from "../../services/repairsApi";
 import { STATUS_MAP, SEVERITY_OPTIONS, STATUS_OPTIONS } from "../../constants/repairEnums";
@@ -28,6 +30,13 @@ import { STATUS_MAP, SEVERITY_OPTIONS, STATUS_OPTIONS } from "../../constants/re
 const formatDate = (dt) => (dt ? new Date(dt).toLocaleString() : "-");
 const formatMoney = (n) =>
   n == null ? "-" : Number(n).toLocaleString("vi-VN", { style: "currency", currency: "VND" });
+
+const normalize = (s = "") =>
+  String(s)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
 
 function isOverSLA(row) {
   if (!row?.sla_hours) return false;
@@ -60,6 +69,16 @@ const buildParams = (p = {}) => {
     return acc;
   }, {});
 
+  // Map status/severity sang NHÃN để tránh lỗi enum khi backend expect label
+  if (sanitized.status) {
+    const opt = STATUS_OPTIONS.find((o) => o.value === sanitized.status);
+    if (opt?.label) sanitized.status = opt.label;
+  }
+  if (sanitized.severity) {
+    const sev = SEVERITY_OPTIONS.find((o) => o.value === sanitized.severity);
+    if (sev?.label) sanitized.severity = sev.label;
+  }
+
   return { ...sanitized, _ts: Date.now(), includeCanceled: "0" };
 };
 
@@ -83,29 +102,69 @@ const cleanTickets = (arr = []) => {
 export default function RepairManagementUI() {
   // filters
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("all");
-  const [severity, setSeverity] = useState("all");
+  const [status, setStatus] = useState("");   // "" = chưa chọn
+  const [severity, setSeverity] = useState("");// "" = chưa chọn
+  const [device, setDevice] = useState("");    // "" = tất cả thiết bị
 
   // data
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // charts
+  // charts + analytics
   const [chartMonthly, setChartMonthly] = useState([]);
   const [chartStatus, setChartStatus] = useState([]);
+  const [prioritySummary, setPrioritySummary] = useState([]);
+  const [topDevices, setTopDevices] = useState([]);
+  const [vendorSummary, setVendorSummary] = useState([]);
 
   // selection
   const [selected, setSelected] = useState(null);
   const [error, setError] = useState(null);
 
+  const priorityTotal = useMemo(
+    () => prioritySummary.reduce((s, x) => s + (x.value || 0), 0),
+    [prioritySummary]
+  );
+  const formatPercent = (val, total) => (total > 0 ? Math.round((val / total) * 100) : 0);
+
+  // filters gửi lên API (device không gửi)
   const filters = useMemo(
     () => ({
       q: search.trim() || undefined,
-      status: status === "all" ? undefined : status,
-      severity: severity === "all" ? undefined : severity,
+      status: status || undefined,
+      severity: severity || undefined,
     }),
-    [search, status, severity],
+    [search, status, severity]
   );
+
+  // danh sách tên thiết bị duy nhất cho dropdown
+  const deviceOptions = useMemo(() => {
+    const set = new Set();
+    tickets.forEach((t) => {
+      if (t?.device_name) set.add(String(t.device_name));
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "vi"));
+  }, [tickets]);
+
+  // hiển thị: tìm text + lọc theo device (client side) + search by outcome
+  const visibleTickets = useMemo(() => {
+    const q = normalize(search);
+    return tickets.filter((t) => {
+      const haystack =
+        normalize(t.title) +
+        " " +
+        normalize(t.issue_description) +
+        " " +
+        normalize(t.device_name) +
+        " " +
+        normalize(t.device_code) +
+        " " +
+        normalize(t.outcome || t.detail?.outcome || "");
+      const textOk = q ? haystack.includes(q) : true;
+      const deviceOk = device ? String(t.device_name) === device : true;
+      return textOk && deviceOk;
+    });
+  }, [tickets, search, device]);
 
   // fetch list (no-cache + clean)
   useEffect(() => {
@@ -141,24 +200,32 @@ export default function RepairManagementUI() {
     getSummaryStats()
       .then((s) => {
         if (cancelled) return;
+
         setChartMonthly((s?.monthly || []).map((item) => ({
           month: item.month,
           cost: Number(item.cost) || 0,
         })));
+
         const dist = (s?.status || []).map((x) => {
           const meta = resolveStatusMeta(x.name, x.label);
-          return {
-            name: meta.label,
-            value: Number(x.value) || 0,
-          };
+          return { name: meta.label, value: Number(x.value) || 0 };
         });
         setChartStatus(dist);
+
+        setPrioritySummary(s?.priority || []);
+        // removed: setSeveritySummary(...)
+        setTopDevices(s?.topDevices || []);
+        setVendorSummary(s?.vendors || []);
       })
       .catch((err) => {
         if (cancelled) return;
         console.error("Không thể tải thống kê sửa chữa", err);
         setChartMonthly([]);
         setChartStatus([]);
+        setPrioritySummary([]);
+        // removed severity
+        setTopDevices([]);
+        setVendorSummary([]);
       });
 
     return () => {
@@ -169,13 +236,12 @@ export default function RepairManagementUI() {
   const kpi = useMemo(() => calcKPIs(tickets), [tickets]);
   const maxMonthlyCost = useMemo(
     () => chartMonthly.reduce((max, item) => Math.max(max, item.cost || 0), 0),
-    [chartMonthly],
+    [chartMonthly]
   );
   const totalStatusCount = useMemo(
     () => chartStatus.reduce((sum, item) => sum + (item.value || 0), 0),
-    [chartStatus],
+    [chartStatus]
   );
-
   const refetchList = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -191,10 +257,17 @@ export default function RepairManagementUI() {
     }
   }, [filters]);
 
+  const resetFilters = () => {
+    setSearch("");
+    setStatus("");
+    setSeverity("");
+    setDevice("");
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white dark:from-slate-900 dark:to-slate-950 p-4 md:p-6">
       <div className="mx-auto max-w-7xl">
-        {/* Header tối giản */}
+        {/* Header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-3">
             <div className="transition-transform duration-300 ease-out">
@@ -203,21 +276,21 @@ export default function RepairManagementUI() {
               </div>
             </div>
             <div>
-              <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Repair Management</h1>
-              <p className="text-slate-500 dark:text-slate-400">Theo dõi ticket, SLA và chi phí</p>
+              <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Quản lý sửa chữa</h1>
+              <p className="text-slate-500 dark:text-slate-400">Theo dõi ticket, SLA và chi phí sửa chữa</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" className="gap-2" onClick={refetchList} title="Làm mới">
-              <ArrowPathIcon className="h-4 w-4" /> Refresh
+              <ArrowPathIcon className="h-4 w-4" /> Làm mới
             </Button>
             <Button variant="outline" className="gap-2" onClick={() => alert("TODO: export CSV")} title="Xuất CSV">
-              <ArrowDownTrayIcon className="h-4 w-4" /> Export
+              <ArrowDownTrayIcon className="h-4 w-4" /> Xuất CSV
             </Button>
           </div>
         </div>
 
-        {/* Filters gọn */}
+        {/* Bộ lọc */}
         <Card className="mt-6">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
@@ -226,44 +299,92 @@ export default function RepairManagementUI() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="flex items-center gap-2">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-center">
+              {/* Search */}
+              <div className="lg:col-span-4 flex items-center gap-2 rounded-xl border px-3 py-2 bg-white dark:bg-slate-950">
                 <MagnifyingGlassIcon className="h-4 w-4 text-slate-400" />
                 <Input
-                  placeholder="Tìm theo tiêu đề, thiết bị, mô tả…"
+                  className="border-0 focus-visible:ring-0 shadow-none"
+                  placeholder="Tìm theo tiêu đề, thiết bị, outcome hoặc mô tả…"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </div>
 
-              {/* ✅ map đúng STATUS_OPTIONS dạng {value,label} */}
-              <Select value={status} onValueChange={setStatus}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Trạng thái" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tất cả trạng thái</SelectItem>
-                  {STATUS_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {/* Thiết bị */}
+              <div className="lg:col-span-3 flex gap-2">
+                <div className="flex-1">
+                  <Select value={device} onValueChange={setDevice}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Thiết bị" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {deviceOptions.map((name) => (
+                        <SelectItem key={name} value={name}>{name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {device && (
+                  <Button variant="outline" title="Bỏ chọn thiết bị" onClick={() => setDevice("")}>
+                    <XMarkIcon className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
 
-              <Select value={severity} onValueChange={setSeverity}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Mức độ" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tất cả mức độ</SelectItem>
-                  {SEVERITY_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {/* Trạng thái */}
+              <div className="lg:col-span-3 flex gap-2">
+                <div className="flex-1">
+                  <Select value={status} onValueChange={setStatus}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Trạng thái" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {STATUS_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {status && (
+                  <Button variant="outline" title="Bỏ chọn trạng thái" onClick={() => setStatus("")}>
+                    <XMarkIcon className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+
+              {/* Mức độ */}
+              <div className="lg:col-span-2 flex gap-2">
+                <div className="flex-1">
+                  <Select value={severity} onValueChange={setSeverity}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Mức độ" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SEVERITY_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {severity && (
+                  <Button variant="outline" title="Bỏ chọn mức độ" onClick={() => setSeverity("")}>
+                    <XMarkIcon className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+
+              {/* Xoá lọc */}
+              <div className="lg:col-span-12 flex justify-end">
+                <Button type="button" variant="outline" onClick={resetFilters} title="Xoá lọc" className="gap-2">
+                  <XMarkIcon className="h-4 w-4" />
+                  Xoá lọc
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -320,10 +441,7 @@ export default function RepairManagementUI() {
                       <div key={item.month} className="flex items-center gap-3">
                         <div className="w-20 text-sm text-slate-500">{item.month}</div>
                         <div className="flex-1 h-2 rounded-full bg-slate-200 overflow-hidden">
-                          <div
-                            className="h-full bg-slate-900"
-                            style={{ width: `${Math.max(4, pct)}%` }}
-                          />
+                          <div className="h-full bg-slate-900" style={{ width: `${Math.max(4, pct)}%` }} />
                         </div>
                         <div className="w-28 text-right text-sm font-medium">{formatMoney(item.cost)}</div>
                       </div>
@@ -349,10 +467,7 @@ export default function RepairManagementUI() {
                       <div key={item.name} className="flex items-center gap-3">
                         <div className="w-32 text-sm text-slate-500">{item.name}</div>
                         <div className="flex-1 h-2 rounded-full bg-slate-200 overflow-hidden">
-                          <div
-                            className="h-full bg-emerald-500"
-                            style={{ width: `${Math.max(4, pct)}%` }}
-                          />
+                          <div className="h-full bg-emerald-500" style={{ width: `${Math.max(4, pct)}%` }} />
                         </div>
                         <div className="w-12 text-right text-sm font-medium">{item.value}</div>
                         <div className="w-10 text-right text-xs text-slate-400">{pct}%</div>
@@ -378,30 +493,29 @@ export default function RepairManagementUI() {
                     <th className="py-2 pr-3">#</th>
                     <th className="py-2 pr-3">Thiết bị</th>
                     <th className="py-2 pr-3">Tiêu đề</th>
-                    <th className="py-2 pr-3">Severity</th>
-                    <th className="py-2 pr-3">Priority</th>
+                    <th className="py-2 pr-3">Kết quả</th>
+                    <th className="py-2 pr-3">Mức độ</th>
+                    <th className="py-2 pr-3">Ưu tiên</th>
                     <th className="py-2 pr-3">Trạng thái</th>
                     <th className="py-2 pr-3">Người báo cáo</th>
                     <th className="py-2 pr-3">Báo lúc</th>
                     <th className="py-2 pr-3">SLA (h)</th>
-                    <th className="py-2 pr-3">Assignee/Vendor</th>
+                    <th className="py-2 pr-3">Người xử lý / NCC</th>
                     <th className="py-2 pr-3">Chi phí</th>
-                    <th className="py-2 pr-3">Actions</th>
+                    <th className="py-2 pr-3">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading &&
                     Array.from({ length: 6 }).map((_, i) => (
                       <tr key={i}>
-                        {/* ✅ khớp đúng 12 cột */}
-                        <td colSpan={12} className="py-3">
+                        <td colSpan={13} className="py-3">
                           <Skeleton className="h-6 w-full" />
                         </td>
                       </tr>
                     ))}
                   {!loading &&
-                    tickets.map((t) => {
-                      const statusMeta = resolveStatusMeta(t.status, t.status_label);
+                    visibleTickets.map((t) => {
                       return (
                         <tr key={t.id_repair} className="border-b hover:bg-slate-50/70 dark:hover:bg-slate-800/30">
                           <td className="py-3 pr-3 font-medium">#{t.id_repair}</td>
@@ -415,7 +529,7 @@ export default function RepairManagementUI() {
                               <button
                                 type="button"
                                 className="text-slate-400 hover:text-slate-700"
-                                title="Open details"
+                                title="Mở chi tiết"
                                 onClick={() => setSelected(t)}
                               >
                                 <ArrowTopRightOnSquareIcon className="h-4 w-4" />
@@ -423,10 +537,17 @@ export default function RepairManagementUI() {
                             </div>
                             <div className="text-xs text-slate-500 line-clamp-1">{t.issue_description}</div>
                           </td>
+
+                          {/* Outcome */}
+                          <td className="py-3 pr-3">
+                            <div className="text-xs text-slate-600 line-clamp-2">
+                              {t.outcome || t.detail?.outcome || "-"}
+                            </div>
+                          </td>
+
                           <td className="py-3 pr-3 capitalize">{t.severity_label || t.severity}</td>
                           <td className="py-3 pr-3 capitalize">{t.priority_label || t.priority}</td>
                           <td className="py-3 pr-3">
-                            {/* ✅ dùng .cls thay vì .color */}
                             <span className={`px-2 py-1 rounded-full text-xs font-medium ${STATUS_MAP[t.status]?.cls || "bg-slate-200"}`}>
                               {STATUS_MAP[t.status]?.label || t.status_label || t.status}
                             </span>
@@ -437,7 +558,7 @@ export default function RepairManagementUI() {
                           <td className="py-3 pr-3">
                             <div className="text-sm">{t.assignee || t.vendor_name || "-"}</div>
                             <div className="text-xs text-slate-500">
-                              {t.repair_type === "vendor" ? "Vendor" : "In-house"}
+                              {t.repair_type === "vendor" ? "Bên ngoài" : "Nội bộ"}
                             </div>
                           </td>
                           <td className="py-3 pr-3">{formatMoney(t.total_cost)}</td>
@@ -449,10 +570,9 @@ export default function RepairManagementUI() {
                         </tr>
                       );
                     })}
-                  {!loading && tickets.length === 0 && (
+                  {!loading && visibleTickets.length === 0 && (
                     <tr>
-                      {/* ✅ khớp đúng 12 cột */}
-                      <td colSpan={12} className="py-3 text-slate-500">
+                      <td colSpan={13} className="py-3 text-slate-500">
                         Không có dữ liệu
                       </td>
                     </tr>
@@ -463,6 +583,110 @@ export default function RepairManagementUI() {
           </CardContent>
         </Card>
 
+        {/* Priority distribution */}
+        <Card className="mt-6">
+          <CardHeader className="pb-1">
+            <CardTitle className="text-base flex items-center gap-2">
+              <ChartPieIcon className="h-4 w-4 text-blue-500" /> Phân bố ưu tiên
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {prioritySummary.length === 0 ? (
+              <p className="text-sm text-slate-500">Chưa có dữ liệu.</p>
+            ) : (
+              prioritySummary.map((item) => {
+                const pct = formatPercent(item.value, priorityTotal);
+                return (
+                  <div key={item.key} className="space-y-1">
+                    <div className="flex items-center justify-between text-sm">
+                      <span>{item.label}</span>
+                      <span className="font-medium">
+                        {item.value} ({pct}%)
+                      </span>
+                    </div>
+                    <div className="h-2 w-full rounded-full bg-slate-200 overflow-hidden">
+                      <div className="h-full bg-blue-500" style={{ width: `${Math.max(4, pct)}%` }} />
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Vendor & Devices */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-6">
+          <Card>
+            <CardHeader className="pb-1">
+              <CardTitle className="text-base flex items-center gap-2">
+                <BuildingOfficeIcon className="h-4 w-4 text-amber-500" /> Nhà cung cấp nổi bật
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-slate-500 border-b">
+                    <th className="py-2 pr-3">Nhà cung cấp</th>
+                    <th className="py-2 pr-3">Lượt</th>
+                    <th className="py-2 pr-3">Chi phí</th>
+                    <th className="py-2 pr-3">Avg / lượt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {vendorSummary.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="py-3 text-slate-500">Chưa có dữ liệu.</td>
+                    </tr>
+                  ) : (
+                    vendorSummary.map((vendor, idx) => (
+                      <tr key={`${vendor.vendor_name}-${idx}`} className="border-b">
+                        <td className="py-3 pr-3">{vendor.vendor_name}</td>
+                        <td className="py-3 pr-3">{vendor.total_jobs}</td>
+                        <td className="py-3 pr-3">{formatMoney(vendor.total_cost)}</td>
+                        <td className="py-3 pr-3">{formatMoney(vendor.average_cost)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-1">
+              <CardTitle className="text-base flex items-center gap-2">
+                <WrenchIcon className="h-4 w-4 text-slate-600" /> Thiết bị nhiều sự cố
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-slate-500 border-b">
+                    <th className="py-2 pr-3">Thiết bị</th>
+                    <th className="py-2 pr-3">Lượt sửa</th>
+                    <th className="py-2 pr-3">Chi phí</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topDevices.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="py-3 text-slate-500">Chưa có dữ liệu.</td>
+                    </tr>
+                  ) : (
+                    topDevices.map((device, idx) => (
+                      <tr key={`${device.device_name}-${idx}`} className="border-b">
+                        <td className="py-3 pr-3">{device.device_name}</td>
+                        <td className="py-3 pr-3">{device.ticket_count}</td>
+                        <td className="py-3 pr-3">{formatMoney(device.total_cost)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        </div>
+
         {/* Sheet chi tiết */}
         <TicketSheet
           ticket={selected}
@@ -470,6 +694,8 @@ export default function RepairManagementUI() {
             if (!v) {
               setSelected(null);
               refetchList();
+            } else {
+              // keep selected as is
             }
           }}
           onChanged={() => {
@@ -480,4 +706,3 @@ export default function RepairManagementUI() {
     </div>
   );
 }
-
