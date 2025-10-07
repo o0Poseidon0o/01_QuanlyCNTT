@@ -4,30 +4,32 @@ const User = require("../../../models/Users/User");
 const Departments = require("../../../models/Departments/departments");
 const { Sequelize } = require("sequelize");
 
-// API: Thống kê số lượng thiết bị theo loại
+/**
+ * GET /api/stasdevices/devices
+ * Thống kê số lượng thiết bị theo LOẠI
+ */
 const getDeviceCountByType = async (req, res) => {
   try {
     const rows = await Devices.findAll({
       attributes: [
         "id_devicetype",
-        // ép về int cho Postgres
-        [Sequelize.literal('COUNT(*)::int'), 'count'],
-        // ĐỔI cột sau cho đúng tên thuộc tính ở model Devicetype của bạn:
-        // nếu model dùng 'device_type' -> 'Devicetype.device_type'
-        // nếu model dùng 'name_devicetype' -> 'Devicetype.name_devicetype'
+        [Sequelize.literal("COUNT(*)::int"), "count"],
+        // Dùng alias theo model Devicetype (bạn không đặt `as`, nên alias là tên model: "Devicetype")
         [Sequelize.col("Devicetype.device_type"), "device_type"],
       ],
-      include: [{ model: Devicetype, attributes: [], required: false }],
+      include: [
+        { model: Devicetype, attributes: [], required: false },
+      ],
       group: [
         "Devices.id_devicetype",
         "Devicetype.id_devicetype",
-        "Devicetype.device_type", // nếu model là name_devicetype thì đổi dòng này cho khớp
+        "Devicetype.device_type",
       ],
       order: [[Sequelize.col("device_type"), "ASC"]],
       raw: true,
     });
 
-    const data = rows.map(r => ({
+    const data = rows.map((r) => ({
       id_devicetype: r.id_devicetype,
       device_type: r.device_type || "Khác",
       count: Number(r.count || 0),
@@ -39,37 +41,65 @@ const getDeviceCountByType = async (req, res) => {
     res.status(500).json({ message: "Error fetching device statistics" });
   }
 };
-// GET /api/stats/users-by-department
-const getUserCountByDepartment = async (req, res) => {
+
+/**
+ * GET /api/stasdevices/by-department
+ * Thống kê số lượng thiết bị theo TỪNG BỘ PHẬN & THEO LOẠI
+ * Trả về: [{ department_name, device_type, count }]
+ *
+ * Chuỗi associations sử dụng:
+ *   Devices --belongsTo--> User --belongsTo(as: 'Department')--> Departments
+ *   Devices --belongsTo--> Devicetype
+ *
+ * Lưu ý Sequelize.col khi include lồng:
+ *   - Dùng "User->Department.department_name" cho nested include
+ */
+const getDeviceTypeByDepartment = async (req, res) => {
   try {
-    const rows = await User.findAll({
+    const rows = await Devices.findAll({
       attributes: [
-        "id_departments",
-        [Sequelize.fn("COUNT", Sequelize.col("User.id_users")), "count"],
-        [Sequelize.col("Department.department_name"), "department_name"], // alias theo tên association
+        [Sequelize.literal("COUNT(*)::int"), "count"],
+        [Sequelize.col("User->Department.department_name"), "department_name"],
+        [Sequelize.col("Devicetype.device_type"), "device_type"],
       ],
       include: [
-        { model: Departments, as: "Department", attributes: [], required: false },
+        {
+          model: User,
+          attributes: [],
+          required: false,
+          include: [
+            { model: Departments, as: "Department", attributes: [], required: false },
+          ],
+        },
+        { model: Devicetype, attributes: [], required: false },
       ],
       group: [
-        "User.id_departments",
-        "Department.id_departments",
-        "Department.department_name",
+        "User->Department.id_departments",
+        "User->Department.department_name",
+        "Devicetype.id_devicetype",
+        "Devicetype.device_type",
       ],
-      order: [[Sequelize.col("department_name"), "ASC"]],
+      order: [
+        [Sequelize.col("User->Department.department_name"), "ASC"],
+        [Sequelize.col("Devicetype.device_type"), "ASC"],
+      ],
       raw: true,
     });
 
-    const data = rows.map(r => ({
+    const data = rows.map((r) => ({
       department_name: r.department_name || "Chưa gán bộ phận",
+      device_type: r.device_type || "Khác",
       count: Number(r.count || 0),
     }));
 
     res.status(200).json(data);
   } catch (error) {
-    console.error("Error fetching users-by-department:", error);
-    res.status(500).json({ message: "Error fetching users-by-department" });
+    console.error("Error fetching device-by-department:", error);
+    res.status(500).json({ message: "Error fetching device-by-department" });
   }
 };
 
-module.exports = { getDeviceCountByType,getUserCountByDepartment };
+module.exports = {
+  getDeviceCountByType,
+  getDeviceTypeByDepartment,
+};
