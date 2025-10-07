@@ -6,8 +6,9 @@ import { createRepair } from "../../services/repairsApi";
 const API_BASE =
   process.env.NODE_ENV === "production" ? "/api" : "http://localhost:5000/api";
 
-const DEFAULT_AVT =
-  "https://avatars.dicebear.com/api/adventurer-neutral/default.svg";
+// DiceBear v7 (đã bỏ domain cũ)
+const DEFAULT_AVT = "https://api.dicebear.com/7.x/adventurer-neutral/svg?seed=default";
+
 
 const PAGE_SIZE_DEFAULT = 8;
 
