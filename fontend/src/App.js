@@ -1,153 +1,36 @@
+/* eslint-disable */
 import React from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-import Login from "./views/login/login";
-import AdminPage from "./views/Admin/Admin";
-import Dashboard from "./views/Admin/AdminDashboard";
-import UserProfile from "./views/Users/Userprofiles";
-import AddUser from "./Layout/Users/AddUserRouter";
-import SettingUser from "./Layout/Users/SettingUserRouter";
-// import Forgotpassword from "./Layout/Users/ForgotpasswordRouter";
-import RoleDepartmentRouter from "./Layout/Department/RoleDepartmentRouter";
-import Department from "./Layout/Department/Department";
-import DataentryRouter from "./Layout/Dataentry/DataentryRouter";
-import ChartRouter from "./Layout/Chart/ChartRouter";
-import ProtectedRoute from "./components/unitls/ProtectedRoute";
-import Unauthorized from "./views/Unauthorzed/Unauthorized"; // Trang báo lỗi quyền hạn
-import WelcomePage from "./views/Welcome/WelcomePage";
-import DocumentManagement from "./views/Documents/DocumentsManagerment"
-import Techenologyquipment from "./views/Techequiqment/Techequiqment";
-// import Repairhistorylist from "./views/Techequiqment/Repairhistory";
-import RepairTech from "./views/Techequiqment/RepairTech";
-import Staticsequipments from "./views/Techequiqment/Staticsequipment";
+import { ROUTES } from "./config/routes";
+import PermissionRoute from "./components/unitls/PermissionRoute";
 
 const App = () => {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<Login />} />
-        <Route path="/unauthorized" element={<Unauthorized />} />
-
-        {/* Route có bảo vệ */}
-        <Route
-          path="/admin"
-          element={
-            <ProtectedRoute allowedRoles={["user", "manager", "admin"]}>
-              <AdminPage />
-            </ProtectedRoute>
+        {ROUTES.map(({ path, component: Component, rule }, i) => {
+          const element = <Component />;
+          // public
+          if (!rule || !rule.anyOf?.length && !rule.allOf?.length && !rule.notAnyOf?.length) {
+            return <Route key={i} path={path} element={element} />;
           }
-        />
-        <Route
-          path="/DocumentsManagement"
-          element={
-            <ProtectedRoute allowedRoles={["admin", "manager","user"]}>
-              <DocumentManagement/>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute allowedRoles={["admin", "manager"]}>
-              <Dashboard />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/userprofile"
-          element={
-            <ProtectedRoute allowedRoles={["user", "manager", "admin"]}>
-              <UserProfile />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/Adduser/*"
-          element={
-            <ProtectedRoute allowedRoles={["admin"]}>
-              <AddUser />
-            </ProtectedRoute>
-          }
-        />
-        {/* <Route
-          path="/forgetpassword/*"
-          element={
-            <ProtectedRoute allowedRoles={["user", "manager", "admin"]}>
-              <Forgotpassword />
-            </ProtectedRoute>
-          }
-        /> */}
-        <Route
-          path="/SettingUser/*"
-          element={
-            <ProtectedRoute allowedRoles={["admin", "manager","user"]}>
-              <SettingUser />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/RoleDepartment/*"
-          element={
-            <ProtectedRoute allowedRoles={["admin", "manager"]}>
-              <RoleDepartmentRouter />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/Department/*"
-          element={
-            <ProtectedRoute allowedRoles={["admin", "manager"]}>
-              <Department />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/Dataentry/*"
-          element={
-            <ProtectedRoute allowedRoles={["user", "manager", "admin"]}>
-              <DataentryRouter />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/Chartview/*"
-          element={
-            <ProtectedRoute allowedRoles={["admin", "manager"]}>
-              <ChartRouter />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/Welcome"
-          element={
-            <ProtectedRoute allowedRoles={["admin", "manager","user"]}>
-              <WelcomePage/>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/Techequipment"
-          element={
-            <ProtectedRoute allowedRoles={["admin", "manager","user"]}>
-              <Techenologyquipment/>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/Repairhistory"
-          element={
-            <ProtectedRoute allowedRoles={["admin", "manager","user"]}>
-              <RepairTech/>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/Staticsequipment"
-          element={
-            <ProtectedRoute allowedRoles={["admin", "manager","user"]}>
-              <Staticsequipments/>
-            </ProtectedRoute>
-          }
-        />
+          // guarded
+          return (
+            <Route
+              key={i}
+              path={path}
+              element={
+                <PermissionRoute
+                  anyOf={rule.anyOf}
+                  allOf={rule.allOf}
+                  notAnyOf={rule.notAnyOf}
+                >
+                  {element}
+                </PermissionRoute>
+              }
+            />
+          );
+        })}
       </Routes>
     </Router>
   );

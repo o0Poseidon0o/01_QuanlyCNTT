@@ -49,7 +49,7 @@ const User = sequelize.define(
   }
 );
 
-User.belongsTo(Roles, { foreignKey: "id_roles" });
+User.belongsTo(Roles, { foreignKey: "id_roles"});
 User.belongsTo(Departments, { foreignKey: "id_departments" });
 
 module.exports = User;

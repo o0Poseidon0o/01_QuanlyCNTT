@@ -5,7 +5,9 @@ const sequelize = require("./src/config/database");
 const departmentRouters=require('./src/routes/department/departmentRoutes');
 const rolesRoles=require('./src/routes/Roles/rolesrouters');
 const users=require('./src/routes/users/userRouters')
+// phần đăng nhập
 const authlogin =require('./src/routes/authloginRoutes/authloginRoutes')
+
 const avatarRoutes = require('./src/middleware/Users/avatarRoutes')
 const ramRouters = require('./src/routes/Technologyequipment/ramRouters')
 const memoryRouters = require('./src/routes/Technologyequipment/memoryRouters')
@@ -19,13 +21,17 @@ const stasdevicesRouters = require('./src/routes/Technologyequipment/stasDevices
 const stasusersRouters = require('./src/routes/Technologyequipment/stasDevices/stasdevicesRouters');
 // =============================Repair======================================
 const repairRoutes = require('./src/routes/repairTech/repairRoutes');
+// ==============================Technology======================================
+const AssignTech = require('./src/routes/Technologyequipment/deviceAssignRoutes');
+// ==============================RolesAdmin======================================
+const roleAdminRoutes = require('./src/routes/RolesAdmin/roleAdminRoutes');
 
 require('dotenv').config();
 const app = express();
 app.use(cors());
 // Middleware để xử lý dữ liệu JSON
 app.use(express.json());
-
+app.use("/api/admin",roleAdminRoutes)
 
 // sử dụng route của phòng ban
 app.use('/api/departments',departmentRouters);
@@ -48,7 +54,8 @@ app.use('/api/stasdevices',stasdevicesRouters)
 app.use('/api/stasusers',stasusersRouters)
 // ==============================Repair======================================
 app.use('/api/repairs',repairRoutes)
-
+// ==============================Technology======================================
+app.use('/api/assignments',AssignTech)
 sequelize
   .sync()
   .then(() => {

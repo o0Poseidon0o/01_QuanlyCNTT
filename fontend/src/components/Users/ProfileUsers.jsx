@@ -320,20 +320,86 @@ const ProfileUsers = () => {
   }, []);
 
   // ---- Data fetching: devices
-  useEffect(() => {
-    const fetchDevices = async () => {
-      if (!userId) return;
-      try {
-        const res = await axios.get(`${API_BASE}/devices/all`);
-        const allDevices = Array.isArray(res.data) ? res.data : [];
-        const userDevices = allDevices.filter((d) => String(d.id_users) === String(userId));
-        setDevices(userDevices);
-      } catch {
-        setDevices([]);
-      }
-    };
-    fetchDevices();
-  }, [userId]);
+useEffect(() => {
+  const fetchDevices = async () => {
+    if (!userId) return;
+
+    // 1) LOGIC CŨ: lấy toàn bộ devices rồi lọc theo id_users
+    let baseDevices = [];
+    try {
+      const rAll = await axios.get(`${API_BASE}/devices/all`, {
+        headers: { "Cache-Control": "no-cache" },
+        params: { t: Date.now() },
+      });
+      const allDevices = Array.isArray(rAll.data) ? rAll.data : [];
+      baseDevices = allDevices
+        .filter((d) => String(d.id_users) === String(userId))
+        .map((d) => ({
+          id_devices: d.id_devices,
+          name_devices: d.name_devices,
+          note: d.DeviceNote || d.note || null,
+          start_time: null, // sẽ được update nếu có trong bảng cấp phát
+        }));
+    } catch {
+      baseDevices = [];
+    }
+
+    // 2) UPDATE LÊN: lấy thêm danh sách thiết bị đang dùng từ cấp phát (không thay thế, chỉ merge)
+    try {
+      const rAssign = await axios.get(
+        `${API_BASE}/assignments/active-by-user/${userId}`,
+        { headers: { "Cache-Control": "no-cache" }, params: { t: Date.now() } }
+      );
+      const assigns = Array.isArray(rAssign.data) ? rAssign.data : [];
+
+      // map assignment -> thiết bị
+      const assignDevices = assigns
+        .map((r) => ({
+          id_devices:
+            r.id_devices ??
+            r.Device?.id_devices ??
+            r.device?.id_devices ??
+            r.device_id,
+          name_devices:
+            r.Device?.name_devices ??
+            r.device?.name_devices ??
+            r.name_devices ??
+            "",
+          start_time: r.start_time || null,
+          note:
+            r.Device?.DeviceNote ??
+            r.Device?.note ??
+            r.device?.note ??
+            r.note ??
+            null,
+        }))
+        .filter((d) => d.id_devices);
+
+      // merge: ưu tiên giữ base (logic cũ), nhưng nếu trùng ID có start_time thì cập nhật
+      const map = new Map();
+      baseDevices.forEach((d) => map.set(String(d.id_devices), d));
+      assignDevices.forEach((d) => {
+        const key = String(d.id_devices);
+        if (map.has(key)) {
+          // cập nhật start_time nếu có
+          const curr = map.get(key);
+          map.set(key, { ...curr, start_time: d.start_time ?? curr.start_time });
+        } else {
+          // thêm mới từ bảng cấp phát
+          map.set(key, d);
+        }
+      });
+
+      setDevices(Array.from(map.values()));
+    } catch {
+      // nếu API cấp phát lỗi, vẫn dùng danh sách gốc
+      setDevices(baseDevices);
+    }
+  };
+
+  fetchDevices();
+}, [userId]);
+
 
   // ---- Data fetching: my tickets
   const fetchMyTickets = async () => {

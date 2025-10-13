@@ -1,32 +1,83 @@
-const Devices = require("../../../models/Techequipment/devices");
-const Devicetype = require("../../../models/Techequipment/devicestype");
-const User = require("../../../models/Users/User");
-const Departments = require("../../../models/Departments/departments");
+// controllers/TechnController/stasDevices/stasdevicesController.js
 const { Sequelize } = require("sequelize");
+
+const Devices          = require("../../../models/Techequipment/devices");
+const Devicetype       = require("../../../models/Techequipment/devicestype");
+const User             = require("../../../models/Users/User");
+const Departments      = require("../../../models/Departments/departments");
+const DeviceAssignment = require("../../../models/Techequipment/DeviceAssignment");
+
+// Lấy tên bảng thực tế từ model (tránh lệ thuộc hard-code)
+const getTbl = (Model) => {
+  try {
+    const t = Model.getTableName ? Model.getTableName() : Model.tableName;
+    return typeof t === "string" ? t : t.tableName;
+  } catch {
+    // fallback an toàn nếu model lạ
+    return Model.tableName || "";
+  }
+};
+
+const TBL = {
+  devices:          getTbl(Devices),
+  devicetype:       getTbl(Devicetype),
+  users:            getTbl(User),
+  departments:      getTbl(Departments),
+  deviceAssignment: getTbl(DeviceAssignment),
+};
 
 /**
  * GET /api/stasdevices/devices
- * Thống kê số lượng thiết bị theo LOẠI
+ * ?department_id=ID  (optional)
+ *
+ * - Không có department_id  -> đếm toàn hệ thống
+ * - Có department_id        -> chỉ đếm các thiết bị đang được gán (assignment end_time IS NULL)
+ *                              cho user trong phòng ban đó.
  */
 const getDeviceCountByType = async (req, res) => {
+  const sequelize = Devices.sequelize; // lấy instance
+  const deptId = req.query.department_id || req.query.id_departments || null;
+
   try {
-    const rows = await Devices.findAll({
-      attributes: [
-        "id_devicetype",
-        [Sequelize.literal("COUNT(*)::int"), "count"],
-        // Dùng alias theo model Devicetype (bạn không đặt `as`, nên alias là tên model: "Devicetype")
-        [Sequelize.col("Devicetype.device_type"), "device_type"],
-      ],
-      include: [
-        { model: Devicetype, attributes: [], required: false },
-      ],
-      group: [
-        "Devices.id_devicetype",
-        "Devicetype.id_devicetype",
-        "Devicetype.device_type",
-      ],
-      order: [[Sequelize.col("device_type"), "ASC"]],
-      raw: true,
+    let sql, replacements;
+
+    if (deptId) {
+      sql = `
+        SELECT
+          d.id_devicetype,
+          COALESCE(dt.device_type, 'Khác') AS device_type,
+          COUNT(DISTINCT d.id_devices)::int AS count
+        FROM "${TBL.devices}" AS d
+        LEFT JOIN "${TBL.devicetype}" AS dt
+          ON dt.id_devicetype = d.id_devicetype
+        INNER JOIN "${TBL.deviceAssignment}" AS da
+          ON da.id_devices = d.id_devices
+         AND da.end_time IS NULL
+        INNER JOIN "${TBL.users}" AS u
+          ON u.id_users = da.id_users
+         AND u.id_departments = :deptId
+        GROUP BY d.id_devicetype, dt.id_devicetype, dt.device_type
+        ORDER BY device_type ASC;
+      `;
+      replacements = { deptId: Number(deptId) };
+    } else {
+      sql = `
+        SELECT
+          d.id_devicetype,
+          COALESCE(dt.device_type, 'Khác') AS device_type,
+          COUNT(*)::int AS count
+        FROM "${TBL.devices}" AS d
+        LEFT JOIN "${TBL.devicetype}" AS dt
+          ON dt.id_devicetype = d.id_devicetype
+        GROUP BY d.id_devicetype, dt.id_devicetype, dt.device_type
+        ORDER BY device_type ASC;
+      `;
+      replacements = {};
+    }
+
+    const rows = await sequelize.query(sql, {
+      type: Sequelize.QueryTypes.SELECT,
+      replacements,
     });
 
     const data = rows.map((r) => ({
@@ -35,55 +86,43 @@ const getDeviceCountByType = async (req, res) => {
       count: Number(r.count || 0),
     }));
 
-    res.status(200).json(data);
+    return res.status(200).json(data);
   } catch (error) {
     console.error("Error fetching device statistics:", error);
-    res.status(500).json({ message: "Error fetching device statistics" });
+    return res.status(500).json({ message: "Error fetching device statistics" });
   }
 };
 
 /**
  * GET /api/stasdevices/by-department
- * Thống kê số lượng thiết bị theo TỪNG BỘ PHẬN & THEO LOẠI
- * Trả về: [{ department_name, device_type, count }]
- *
- * Chuỗi associations sử dụng:
- *   Devices --belongsTo--> User --belongsTo(as: 'Department')--> Departments
- *   Devices --belongsTo--> Devicetype
- *
- * Lưu ý Sequelize.col khi include lồng:
- *   - Dùng "User->Department.department_name" cho nested include
+ * Thống kê theo từng phòng ban & loại thiết bị.
+ * Dựa trên assignment active (end_time IS NULL) qua users → departments.
  */
-const getDeviceTypeByDepartment = async (req, res) => {
+const getDeviceTypeByDepartment = async (_req, res) => {
+  const sequelize = Devices.sequelize;
+
   try {
-    const rows = await Devices.findAll({
-      attributes: [
-        [Sequelize.literal("COUNT(*)::int"), "count"],
-        [Sequelize.col("User->Department.department_name"), "department_name"],
-        [Sequelize.col("Devicetype.device_type"), "device_type"],
-      ],
-      include: [
-        {
-          model: User,
-          attributes: [],
-          required: false,
-          include: [
-            { model: Departments, as: "Department", attributes: [], required: false },
-          ],
-        },
-        { model: Devicetype, attributes: [], required: false },
-      ],
-      group: [
-        "User->Department.id_departments",
-        "User->Department.department_name",
-        "Devicetype.id_devicetype",
-        "Devicetype.device_type",
-      ],
-      order: [
-        [Sequelize.col("User->Department.department_name"), "ASC"],
-        [Sequelize.col("Devicetype.device_type"), "ASC"],
-      ],
-      raw: true,
+    const sql = `
+      SELECT
+        COALESCE(dep.department_name, 'Chưa gán bộ phận') AS department_name,
+        COALESCE(dt.device_type, 'Khác')                   AS device_type,
+        COUNT(DISTINCT d.id_devices)::int                  AS count
+      FROM "${TBL.devices}" AS d
+      LEFT JOIN "${TBL.devicetype}" AS dt
+        ON dt.id_devicetype = d.id_devicetype
+      LEFT JOIN "${TBL.deviceAssignment}" AS da
+        ON da.id_devices = d.id_devices
+       AND da.end_time IS NULL
+      LEFT JOIN "${TBL.users}" AS u
+        ON u.id_users = da.id_users
+      LEFT JOIN "${TBL.departments}" AS dep
+        ON dep.id_departments = u.id_departments
+      GROUP BY dep.id_departments, dep.department_name, dt.id_devicetype, dt.device_type
+      ORDER BY dep.department_name ASC NULLS LAST, dt.device_type ASC;
+    `;
+
+    const rows = await sequelize.query(sql, {
+      type: Sequelize.QueryTypes.SELECT,
     });
 
     const data = rows.map((r) => ({
@@ -92,10 +131,10 @@ const getDeviceTypeByDepartment = async (req, res) => {
       count: Number(r.count || 0),
     }));
 
-    res.status(200).json(data);
+    return res.status(200).json(data);
   } catch (error) {
     console.error("Error fetching device-by-department:", error);
-    res.status(500).json({ message: "Error fetching device-by-department" });
+    return res.status(500).json({ message: "Error fetching device-by-department" });
   }
 };
 
