@@ -1,5 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
 import axios from "../../lib/httpClient";
+import { Bar, Doughnut } from "react-chartjs-2";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  ArcElement,
+  Tooltip,
+  Legend,
+  Title,
+} from "chart.js";
+
+ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend, Title);
 
 const API_BASE = "http://localhost:5000/api";
 
@@ -10,95 +23,62 @@ const BASE_COLORS = [
   "#84cc16", "#06b6d4", "#f59e0b", "#d946ef", "#f43f5e",
 ];
 
-/** ==== Donut chart utils ==== */
-function polarToCartesian(cx, cy, r, angleDeg) {
-  const rad = (angleDeg * Math.PI) / 180;
-  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
-}
-function donutSlicePath(cx, cy, rOuter, rInner, startDeg, endDeg) {
-  const largeArc = endDeg - startDeg > 180 ? 1 : 0;
-  const pOuterStart = polarToCartesian(cx, cy, rOuter, startDeg);
-  const pOuterEnd   = polarToCartesian(cx, cy, rOuter, endDeg);
-  const pInnerEnd   = polarToCartesian(cx, cy, rInner, endDeg);
-  const pInnerStart = polarToCartesian(cx, cy, rInner, startDeg);
-  return [
-    `M ${pOuterStart.x} ${pOuterStart.y}`,
-    `A ${rOuter} ${rOuter} 0 ${largeArc} 1 ${pOuterEnd.x} ${pOuterEnd.y}`,
-    `L ${pInnerEnd.x} ${pInnerEnd.y}`,
-    `A ${rInner} ${rInner} 0 ${largeArc} 0 ${pInnerStart.x} ${pInnerStart.y}`,
-    "Z",
-  ].join(" ");
-}
-const PieDonut = ({ data, colorsMap, radius=120, innerRadius=70, onHoverIndex, hoverIndex=null }) => {
-  const total = data.reduce((s, d) => s + (Number(d.value) || 0), 0);
-  const cx = radius + 6, cy = radius + 6, w = (radius + 6) * 2, h = w;
-  if (!total) return <p className="text-sm text-gray-500">Không có dữ liệu để vẽ biểu đồ.</p>;
-  let acc = -90;
-  const slices = data.map((d, idx) => {
-    const val = Number(d.value) || 0;
-    const deg = (val / total) * 360;
-    const start = acc, end = acc + deg; acc = end;
-    return { ...d, start, end, idx };
-  });
-  return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
-      {slices.map((s) => {
-        const isHover = hoverIndex === s.idx;
-        const rOuter = isHover ? radius + 6 : radius;
-        const path = donutSlicePath(cx, cy, rOuter, innerRadius, s.start, s.end);
-        const fill = colorsMap[s.label] || "#e5e7eb";
-        return (
-          <path
-            key={s.label}
-            d={path}
-            fill={fill}
-            stroke="#fff"
-            strokeWidth={1}
-            style={{ cursor: "pointer", transition: "all .15s ease", opacity: isHover ? 0.9 : 1 }}
-            onMouseEnter={() => onHoverIndex?.(s.idx)}
-            onMouseLeave={() => onHoverIndex?.(null)}
-          />
-        );
-      })}
-      <circle cx={cx} cy={cy} r={innerRadius - 1} fill="#fff" />
-      <text x={cx} y={cy - 4} textAnchor="middle" className="fill-gray-700" style={{ fontSize: 18, fontWeight: 700 }}>
-        {total}
-      </text>
-      <text x={cx} y={cy + 14} textAnchor="middle" className="fill-gray-500" style={{ fontSize: 12 }}>
-        Tổng thiết bị
-      </text>
-    </svg>
-  );
+/** Vẽ text giữa doughnut (tổng) */
+const centerTextPlugin = {
+  id: "centerText",
+  afterDraw(chart, _args, opts) {
+    const { ctx } = chart;
+    const dsMeta = chart.getDatasetMeta(0);
+    if (!dsMeta || !dsMeta.data || !dsMeta.data.length) return;
+    const { x, y } = dsMeta.data[0];
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.fillStyle = opts.color || "#374151";
+    ctx.font = "700 18px system-ui, sans-serif";
+    ctx.fillText(opts.textTop || "", x, y - 4);
+    ctx.font = "12px system-ui, sans-serif";
+    ctx.fillStyle = opts.subColor || "#6b7280";
+    ctx.fillText(opts.textBottom || "", x, y + 14);
+    ctx.restore();
+  },
 };
+ChartJS.register(centerTextPlugin);
 
 const Statisticsequipment = () => {
+  /** Dữ liệu Doughnut: thiết bị theo loại (lọc được theo phòng ban) */
   const [deviceStats, setDeviceStats] = useState([]); // [{label, value}]
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
-  // Bộ lọc phòng ban
+  /** Danh sách phòng ban + chọn lọc cho doughnut */
   const [departments, setDepartments] = useState([]); // [{id_departments, department_name}]
   const [selectedDept, setSelectedDept] = useState(""); // "" = tất cả
 
-  // Hiển thị
-  const [displayMode, setDisplayMode] = useState("count"); // "count" | "percent"
-  const [hoverIndex, setHoverIndex] = useState(null);
+  /** Dữ liệu Bar: tổng thiết bị theo phòng ban */
+  const [deptTotals, setDeptTotals] = useState([]); // [{deptName, total}]
+  const [deptNameToId, setDeptNameToId] = useState({}); // map name -> id (để click bar lọc doughnut)
+  const [barLimit, setBarLimit] = useState(20); // top N
 
-  // Lấy danh sách phòng ban (nếu có endpoint khác, đổi URL bên dưới)
+  // Lấy danh sách phòng ban
   useEffect(() => {
     (async () => {
       try {
         const r = await axios.get(`${API_BASE}/departments/all-departments`);
         const arr = r.data?.departments ?? r.data ?? [];
-        setDepartments(Array.isArray(arr) ? arr : []);
+        const list = Array.isArray(arr) ? arr : [];
+        setDepartments(list);
+        const map = {};
+        list.forEach((d) => { if (d?.department_name) map[d.department_name] = d.id_departments; });
+        setDeptNameToId(map);
       } catch {
-        setDepartments([]); // nếu không có API, vẫn cho nhập tay ID nếu muốn (tuỳ chỉnh thêm)
+        setDepartments([]);
+        setDeptNameToId({});
       }
     })();
   }, []);
 
-  // Lấy thống kê theo bộ lọc
-  const fetchStats = async (deptId) => {
+  // Lấy dữ liệu doughnut theo phòng ban
+  const fetchTypeStats = async (deptId) => {
     try {
       setErr("");
       setLoading(true);
@@ -118,38 +98,138 @@ const Statisticsequipment = () => {
     }
   };
 
-  useEffect(() => { fetchStats(selectedDept); }, [selectedDept]);
+  // Lấy dữ liệu tổng theo phòng ban (từ /by-department, cộng dồn theo department_name)
+  const fetchDeptTotals = async () => {
+    try {
+      const r = await axios.get(`${API_BASE}/stasdevices/by-department`);
+      const rows = Array.isArray(r.data) ? r.data : [];
+      const map = {};
+      for (const row of rows) {
+        const name = row.department_name || "Chưa gán bộ phận";
+        const cnt = Number(row.count || 0);
+        map[name] = (map[name] || 0) + cnt;
+      }
+      const arr = Object.entries(map).map(([deptName, total]) => ({ deptName, total }));
+      arr.sort((a, b) => b.total - a.total);
+      setDeptTotals(arr);
+    } catch (e) {
+      console.warn("Không lấy được tổng theo phòng ban:", e?.message || e);
+      setDeptTotals([]);
+    }
+  };
 
-  const total = useMemo(() => deviceStats.reduce((s, d) => s + (Number(d.value) || 0), 0), [deviceStats]);
+  useEffect(() => { fetchTypeStats(selectedDept); }, [selectedDept]);
+  useEffect(() => { fetchDeptTotals(); }, []);
 
-  const colorMap = useMemo(() => {
+  const totalAll = useMemo(
+    () => deviceStats.reduce((s, d) => s + (Number(d.value) || 0), 0),
+    [deviceStats]
+  );
+
+  /** Colors map cho doughnut (theo loại) */
+  const colorMapTypes = useMemo(() => {
     const map = {};
     deviceStats.forEach((d, idx) => { map[d.label] = BASE_COLORS[idx % BASE_COLORS.length]; });
     return map;
   }, [deviceStats]);
 
-  const legend = useMemo(() => {
-    const arr = [...deviceStats];
-    arr.sort((a, b) => (b.value || 0) - (a.value || 0));
-    return arr;
-  }, [deviceStats]);
+  /** Dataset cho Doughnut */
+  const doughnutData = useMemo(() => {
+    const labels = deviceStats.map((d) => d.label);
+    const data = deviceStats.map((d) => d.value);
+    const backgroundColor = labels.map((lab, idx) => colorMapTypes[lab] || BASE_COLORS[idx % BASE_COLORS.length]);
+    return {
+      labels,
+      datasets: [{ data, backgroundColor, borderWidth: 1 }],
+    };
+  }, [deviceStats, colorMapTypes]);
 
-  const activeItem = hoverIndex != null ? deviceStats[hoverIndex] : null;
-  const activePct = activeItem && total ? Math.round((activeItem.value / total) * 100) : 0;
+  const doughnutOptions = useMemo(() => ({
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { position: "right" },
+      title: {
+        display: true,
+        text: `Thiết bị theo loại ${selectedDept ? `(PB #${selectedDept})` : "(Toàn hệ thống)"}`,
+      },
+      tooltip: {
+        callbacks: {
+          label: (ctx) => {
+            const value = ctx.parsed ?? 0;
+            const pct = totalAll ? Math.round((value / totalAll) * 100) : 0;
+            return `${ctx.label}: ${value} (${pct}%)`;
+          },
+        },
+      },
+      centerText: {
+        textTop: `${totalAll}`,
+        textBottom: "Tổng thiết bị",
+      },
+    },
+    cutout: "62%",
+  }), [totalAll, selectedDept]);
+
+  /** Dữ liệu cho Bar ngang (tổng theo phòng ban) */
+  const topDeptTotals = useMemo(() => {
+    if (!barLimit) return deptTotals;
+    return deptTotals.slice(0, barLimit);
+  }, [deptTotals, barLimit]);
+
+  const barLabels = topDeptTotals.map((x) => x.deptName);
+  const barValues = topDeptTotals.map((x) => x.total);
+  const barColors = barLabels.map((_, i) => BASE_COLORS[i % BASE_COLORS.length]);
+
+  const barData = {
+    labels: barLabels,
+    datasets: [
+      {
+        label: "Tổng thiết bị",
+        data: barValues,
+        backgroundColor: barColors,
+        borderWidth: 1,
+      },
+    ],
+  };
+
+  const barOptions = {
+    indexAxis: "y",
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      title: { display: true, text: "Tổng số thiết bị theo phòng ban" },
+      tooltip: {
+        callbacks: {
+          label: (ctx) => ` ${ctx.raw} thiết bị`,
+        },
+      },
+    },
+    scales: {
+      x: { beginAtZero: true, ticks: { precision: 0 } },
+      y: { ticks: { autoSkip: false } },
+    },
+    onClick: (_evt, elements) => {
+      if (!elements?.length) return;
+      const idx = elements[0].index;
+      const label = barLabels[idx];
+      const id = deptNameToId[label];
+      if (id) setSelectedDept(String(id));
+    },
+  };
 
   return (
     <div className="p-6 bg-gray-100 min-h-screen">
       <div className="mb-6">
         <h1 className="text-3xl font-bold text-gray-800">📊 Thống kê hệ thống</h1>
-        <p className="text-gray-600">Thiết bị theo loại (lọc được theo phòng ban)</p>
+        <p className="text-gray-600">Tổng quan theo phòng ban & chi tiết theo loại thiết bị</p>
       </div>
 
       {loading && <div className="mb-4 text-gray-600">Đang tải dữ liệu…</div>}
       {!!err && <div className="mb-4 text-red-600">{err}</div>}
 
-      <div className="bg-white rounded-lg shadow-lg p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-          <div className="flex items-center gap-2">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Doughnut: Thiết bị theo loại (lọc phòng ban) */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center gap-3 mb-4">
             <label className="text-sm text-gray-600">Phòng ban:</label>
             <select
               className="px-2 py-1 border rounded text-sm"
@@ -164,95 +244,73 @@ const Statisticsequipment = () => {
                 </option>
               ))}
             </select>
+            {selectedDept && (
+              <button
+                className="ml-auto text-sm text-blue-600 underline"
+                onClick={() => setSelectedDept("")}
+                title="Bỏ lọc"
+              >
+                Bỏ lọc
+              </button>
+            )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <select
-              value={displayMode}
-              onChange={(e) => setDisplayMode(e.target.value)}
-              className="px-2 py-1 border rounded text-sm"
-              title="Chế độ hiển thị"
-            >
-              <option value="count">Hiển thị: Số lượng</option>
-              <option value="percent">Hiển thị: %</option>
-            </select>
-          </div>
+          {(!deviceStats || deviceStats.length === 0) ? (
+            <p className="text-sm text-gray-500">Không có dữ liệu thiết bị.</p>
+          ) : (
+            <div className="h-[340px]">
+              <Doughnut data={doughnutData} options={doughnutOptions} />
+            </div>
+          )}
+
+          {/* Legend nhỏ bên dưới (xếp theo giảm dần) */}
+          {deviceStats.length > 0 && (
+            <div className="mt-5 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2">
+              {[...deviceStats].sort((a, b) => b.value - a.value).map((d, idx) => (
+                <div key={d.label} className="flex items-center gap-2 min-w-0">
+                  <span
+                    className="inline-flex h-3 w-3 rounded"
+                    style={{ backgroundColor: colorMapTypes[d.label] || BASE_COLORS[idx % BASE_COLORS.length] }}
+                  />
+                  <span className="text-xs text-gray-600 truncate" title={d.label}>
+                    {d.label}
+                  </span>
+                  <span className="ml-auto text-xs text-gray-700 tabular-nums">{d.value}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {(!deviceStats || deviceStats.length === 0) ? (
-          <p className="text-sm text-gray-500">Không có dữ liệu thiết bị.</p>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-center">
-            <div className="flex items-center justify-center">
-              <PieDonut
-                data={deviceStats}
-                colorsMap={colorMap}
-                radius={120}
-                innerRadius={70}
-                hoverIndex={hoverIndex}
-                onHoverIndex={setHoverIndex}
-              />
+        {/* Bar ngang: Tổng thiết bị theo phòng ban */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="text-sm text-gray-600">
+              Click một phòng ban để lọc biểu đồ doughnut bên trái
             </div>
-
-            <div className="space-y-4">
-              {activeItem ? (
-                <div className="rounded-lg border p-3 bg-gray-50">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="inline-flex h-3 w-3 rounded"
-                      style={{ backgroundColor: colorMap[activeItem.label] || "#e5e7eb" }}
-                    />
-                    <span className="font-medium text-gray-800">{activeItem.label}</span>
-                  </div>
-                  <div className="mt-1 text-gray-700 tabular-nums">
-                    {displayMode === "percent"
-                      ? `${activePct}%`
-                      : `${activeItem.value} thiết bị`}{" "}
-                    <span className="text-gray-500 text-sm">
-                      ({Math.round((activeItem.value / (total || 1)) * 100)}%)
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-lg border p-3 text-gray-600 bg-gray-50">
-                  Di chuột vào lát biểu đồ để xem chi tiết.
-                </div>
-              )}
-
-              <div className="max-h-[60vh] overflow-auto pr-1">
-                <ul className="space-y-2">
-                  {legend.map((d) => {
-                    const pct = total ? Math.round((d.value / total) * 100) : 0;
-                    const idx = deviceStats.findIndex((x) => x.label === d.label);
-                    const isHover = hoverIndex === idx;
-                    return (
-                      <li
-                        key={d.label}
-                        className={`flex items-center justify-between gap-3 p-2 rounded ${isHover ? "bg-blue-50" : ""}`}
-                        onMouseEnter={() => setHoverIndex(idx)}
-                        onMouseLeave={() => setHoverIndex(null)}
-                        style={{ cursor: "default" }}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span
-                            className="inline-flex h-3 w-3 rounded"
-                            style={{ backgroundColor: colorMap[d.label] || "#e5e7eb" }}
-                          />
-                          <span className="text-sm text-gray-700 truncate" title={d.label}>
-                            {d.label}
-                          </span>
-                        </div>
-                        <div className="text-sm text-gray-800 tabular-nums">
-                          {displayMode === "percent" ? `${pct}%` : d.value}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600">Hiển thị:</label>
+              <select
+                value={barLimit}
+                onChange={(e) => setBarLimit(Number(e.target.value))}
+                className="px-2 py-1 border rounded text-sm"
+              >
+                <option value={10}>Top 10</option>
+                <option value={20}>Top 20</option>
+                <option value={50}>Top 50</option>
+                <option value={0}>Tất cả</option>
+              </select>
             </div>
           </div>
-        )}
+
+          {deptTotals.length === 0 ? (
+            <p className="text-sm text-gray-500">Chưa có dữ liệu tổng theo phòng ban.</p>
+          ) : (
+            <div className="h-[420px]">
+              <Bar data={barData} options={barOptions} />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

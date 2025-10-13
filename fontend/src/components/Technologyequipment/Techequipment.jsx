@@ -101,7 +101,7 @@ const SearchableSelect = ({
 const TechEquipment = () => {
   const [devices, setDevices] = useState([]);
   const [activeCountMap, setActiveCountMap] = useState({});
-  const [activeUsersMap, setActiveUsersMap] = useState({}); // { [id_devices]: [{id_users, username, email_user}, ...] }
+  const [activeUsersMap, setActiveUsersMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [isAddModalOpen, setAddModalOpen] = useState(false);
@@ -147,7 +147,7 @@ const TechEquipment = () => {
   });
 
   // --- Sort theo ID ---
-  const [idSortDir, setIdSortDir] = useState("desc"); // "asc" | "desc"
+  const [idSortDir, setIdSortDir] = useState("desc");
 
   // Lấy danh sách thiết bị
   const fetchDevices = async () => {
@@ -252,7 +252,6 @@ const TechEquipment = () => {
   const fetchActiveUsersMap = async (listArg) => {
     const list = Array.isArray(listArg) && listArg.length ? listArg : devices;
     try {
-      // Ưu tiên API gộp (nếu có)
       const res = await axios.get(`${API_BASE}/assignments/active-map`, {
         headers: { "Cache-Control": "no-cache" },
         params: { t: Date.now() },
@@ -263,7 +262,6 @@ const TechEquipment = () => {
       }
       throw new Error("No active-map data");
     } catch (_) {
-      // Fallback: gọi từng thiết bị
       try {
         const pairs = await Promise.allSettled(
           list.map((d) =>
@@ -311,7 +309,7 @@ const TechEquipment = () => {
     return nameOk || userOk;
   });
 
-  // Sort theo ID (numeric ưu tiên)
+  // Sort theo ID
   const sortedFilteredDevices = useMemo(() => {
     const parseMaybeNumber = (v) => {
       const n = Number(v);
@@ -326,12 +324,12 @@ const TechEquipment = () => {
     });
   }, [filteredDevices, idSortDir]);
 
-  // MỞ modal thêm/sửa (reload dropdown TRƯỚC khi mở)
+  // MỞ modal thêm/sửa
   const openAddModal = async () => {
     if (!isAdmin) return alert("Bạn không có quyền thực hiện thao tác này.");
     await fetchDropdownData();
     setFormData({
-      id_devices: "", // để trống => user nhập tay
+      id_devices: "",
       id_devicetype: "",
       id_cpu: "",
       id_ram: "",
@@ -373,9 +371,9 @@ const TechEquipment = () => {
     return true;
   };
 
-  // Chuẩn hóa payload gửi backend (có id_devices!)
+  // Chuẩn hóa payload gửi backend
   const normalizePayload = (payload) => ({
-    id_devices: payload.id_devices, // <<-- BẮT BUỘC gửi lên
+    id_devices: payload.id_devices,
     id_devicetype: toNullIfEmpty(payload.id_devicetype),
     id_cpu: toNullIfEmpty(payload.id_cpu),
     id_ram: toNullIfEmpty(payload.id_ram),
@@ -387,25 +385,19 @@ const TechEquipment = () => {
     date_warranty: payload.date_warranty,
   });
 
-  // CRUD API (chỉ admin)
+  // CRUD API
   const addDevice = async () => {
     if (!isAdmin) return alert("Bạn không có quyền thực hiện thao tác này.");
     if (!validateDates()) return;
 
-    // Validate tối thiểu
-    if (
-      !formData.id_devices ||
-      !formData.name_devices ||
-      !formData.date_buydevices ||
-      !formData.date_warranty
-    ) {
+    if (!formData.id_devices || !formData.name_devices || !formData.date_buydevices || !formData.date_warranty) {
       return alert("Vui lòng nhập đủ: ID thiết bị, Tên thiết bị, Ngày mua, Ngày bảo hành.");
     }
 
     try {
       const payload = normalizePayload(formData);
       await axios.post(`${API_BASE}/devices/add`, payload);
-      const list = await fetchDevices();     // load lại danh sách
+      const list = await fetchDevices();
       await Promise.all([fetchActiveCountMap(), fetchDropdownData()]);
       await fetchActiveUsersMap(list);
       closeAddModal();
@@ -475,7 +467,7 @@ const TechEquipment = () => {
     if (!isAdmin) return alert("Bạn không có quyền thực hiện thao tác này.");
     try {
       await axios.post(`${API_BASE}/assignments/checkout`, { id_users, id_devices });
-      await openActiveUsersModal({ id_devices, name_devices: activeUsersModal.device?.name_devices || "" }); // reload modal
+      await openActiveUsersModal({ id_devices, name_devices: activeUsersModal.device?.name_devices || "" });
       await fetchActiveCountMap();
       await fetchActiveUsersMap();
     } catch (e) {
@@ -483,7 +475,7 @@ const TechEquipment = () => {
     }
   };
 
-  // ====== Assign User Modal (gán thêm user) ======
+  // ====== Assign User Modal ======
   const openAssignModal = (device) => setAssignModal({ open: true, device });
   const closeAssignModal = () => setAssignModal({ open: false, device: null });
 
@@ -503,7 +495,7 @@ const TechEquipment = () => {
     }
   };
 
-  // CategoryModal (chỉ admin)
+  // CategoryModal
   const openCategoryModal = (type) => {
     if (!isAdmin) return alert("Bạn không có quyền thực hiện thao tác này.");
     setCategoryModal({ open: true, type });
@@ -569,10 +561,10 @@ const TechEquipment = () => {
                 )}
               </th>
               <th className="py-2 px-3">Tên thiết bị</th>
-
-              <th className="py-2 px-3">Người dùng </th>   (từ assignments)
+              <th className="py-2 px-3">
+                Người dùng <span className="text-xs text-gray-500">(từ assignments)</span>
+              </th>
               <th className="py-2 px-3">Đang dùng</th>
-
               <th className="py-2 px-3">Ngày mua</th>
               <th className="py-2 px-3">Ngày bảo hành</th>
               <th className="py-2 px-3">
@@ -652,7 +644,7 @@ const TechEquipment = () => {
                   <td className="py-2 px-3">{device?.Devicetype?.device_type || "—"}</td>
                   <td className="py-2 px-3">{device.name_devices}</td>
 
-                  {/* Cột người dùng: CHỈ hiển thị tên, KHÔNG có nút Xem/Gán */}
+                  {/* Cột người dùng: chỉ tên */}
                   <td className="py-2 px-3">
                     {names.length ? (
                       <div className="flex items-center gap-2 flex-wrap">
@@ -749,6 +741,7 @@ const TechEquipment = () => {
           onClose={isAddModalOpen ? closeAddModal : closeEditModal}
           dropdownData={dropdownData}
           isAdmin={isAdmin}
+          isEdit={isEditModalOpen}   // <<< truyền cờ Sửa/Thêm đúng cách
         />
       )}
 
@@ -796,9 +789,8 @@ const DeviceModal = ({
   onClose,
   dropdownData,
   isAdmin,
+  isEdit, // <<< nhận từ cha, KHÔNG tự suy ra
 }) => {
-  const isEdit = Boolean(formData?.id_devices);
-
   const makeOptions = (arr, mapFn) => (Array.isArray(arr) ? arr.map(mapFn) : []);
 
   const devicetypeOptions = useMemo(
@@ -849,7 +841,7 @@ const DeviceModal = ({
       <div className="bg-white p-6 rounded shadow-md w-[760px] max-w-[95vw]">
         <h2 className="text-xl mb-4">{title}</h2>
         <div className="grid grid-cols-2 gap-4 mb-4">
-          {/* ID: luôn hiển thị. Khi SỬA thì readonly */}
+          {/* ID: khi SỬA readonly; khi THÊM nhập tự do */}
           <input
             name="id_devices"
             value={formData.id_devices}
