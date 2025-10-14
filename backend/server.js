@@ -66,15 +66,7 @@ app.use(express.urlencoded({ extended: true, limit: "5mb" }));
 app.use(express.text({ type: "text/plain", limit: "5mb" })); // chỉ cho text/plain
 
 
-app.use(
-  "/uploads",
-  express.static(path.join(__dirname, "src/uploads"), {
-    fallthrough: true,
-    etag: true,
-    maxAge: "7d",
-    extensions: ["png", "jpg", "jpeg", "svg", "gif", "webp"],
-  })
-);
+
 
 
 app.use("/api/signatures", signatureRoutes);

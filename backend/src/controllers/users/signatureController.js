@@ -1,50 +1,77 @@
-// src/controllers/users/signatureController.js
 const path = require("path");
 const fs = require("fs");
 const User = require("../../models/Users/User");
 
-// Thư mục thật chứa uploads
-const UPLOADS_DIR = path.resolve(__dirname, "../../uploads");
-const SIGN_DIR = path.join(UPLOADS_DIR, "sign");
+const DEFAULT_SIGNATURE_REL = "../../uploads/sign/ticket.png";
+const UPLOADS_DIR_ABS = path.resolve(__dirname, "../../uploads");
+const SIGN_DIR_ABS = path.join(UPLOADS_DIR_ABS, "sign");
 
-// Đường dẫn mặc định LƯU TRONG DB (giống avatar: ../../uploads/...)
-const DEFAULT_DB_PATH = "../../uploads/sign/ticket.png";
+if (!fs.existsSync(SIGN_DIR_ABS)) fs.mkdirSync(SIGN_DIR_ABS, { recursive: true });
 
-// đảm bảo thư mục tồn tại
-if (!fs.existsSync(SIGN_DIR)) fs.mkdirSync(SIGN_DIR, { recursive: true });
+const ensureId = (id) => /^\d+$/.test(String(id || "").trim());
+const resolveAbs = (storedPath) => path.resolve(__dirname, storedPath);
 
-// Convert DB path -> absolute path
-function dbPathToAbs(dbPath) {
-  if (!dbPath) return path.join(SIGN_DIR, "ticket.png");
-  const norm = String(dbPath).replace(/\\/g, "/");
-  const cleaned = norm.includes("uploads/") ? norm.slice(norm.indexOf("uploads/")) : norm;
-  return path.join(UPLOADS_DIR, cleaned.replace(/^(\.\/|\.\.\/)+/, ""));
+function safeUnlink(absPath) {
+  try { if (absPath && fs.existsSync(absPath)) fs.unlinkSync(absPath); }
+  catch (e) { console.warn("safeUnlink warn:", e.message); }
 }
 
-const isDefault = (p) =>
-  String(p || "").endsWith("/uploads/sign/ticket.png") ||
-  String(p || "").endsWith("../../uploads/sign/ticket.png");
+function removeAllVariants(id_users) {
+  [".png", ".jpg", ".jpeg", ".svg"].forEach((ext) => {
+    safeUnlink(path.join(SIGN_DIR_ABS, `${id_users}${ext}`));
+  });
+}
 
-function safeUnlinkDbPath(dbPath) {
-  try {
-    if (!dbPath || isDefault(dbPath)) return;
-    const abs = dbPathToAbs(dbPath);
-    if (fs.existsSync(abs)) fs.unlinkSync(abs);
-  } catch (e) {
-    console.warn("safeUnlink warn:", e.message);
+function findExistingSignaturePathAbs(id_users) {
+  const exts = [".png", ".jpg", ".jpeg", ".svg"];
+  for (const ext of exts) {
+    const abs = path.join(SIGN_DIR_ABS, `${id_users}${ext}`);
+    if (fs.existsSync(abs)) return abs;
   }
+  return resolveAbs(DEFAULT_SIGNATURE_REL);
 }
 
-/** Upload ảnh (multer đã lưu xong) */
+/** Chọn đuôi file hợp lệ từ mimetype/originalname (mặc định .png) */
+function pickExt(file) {
+  const m = (file?.mimetype || "").toLowerCase();
+  if (m.includes("svg")) return ".svg";
+  if (m.includes("jpeg")) return ".jpg";
+  if (m.includes("jpg")) return ".jpg";
+  if (m.includes("png")) return ".png";
+  const extByName = path.extname((file?.originalname || "").toLowerCase());
+  if ([".svg", ".jpg", ".jpeg", ".png"].includes(extByName)) return extByName;
+  return ".png";
+}
+
+/** UPLOAD: luôn xoá biến thể cũ và ghi đè <id_users>.<ext> */
 const uploadSignature = async (req, res) => {
   try {
     const { id_users } = req.params;
+    if (!ensureId(id_users)) return res.status(400).json({ message: "Invalid user id" });
+
     const user = await User.findByPk(id_users);
     if (!user) return res.status(404).json({ message: "User not found" });
     if (!req.file) return res.status(400).json({ message: "No signature file uploaded" });
 
-    const dbPath = `../../uploads/sign/${req.file.filename}`; // giống avatar
-    safeUnlinkDbPath(user.signature_image);
+    // 1) Xoá mọi biến thể cũ
+    removeAllVariants(id_users);
+
+    // 2) Xác định đuôi cần lưu
+    const ext = pickExt(req.file);
+    const targetAbs = path.join(SIGN_DIR_ABS, `${id_users}${ext}`);
+
+    // 3) Ghi đè: hỗ trợ cả diskStorage (req.file.path) và memoryStorage (req.file.buffer)
+    if (req.file.path && fs.existsSync(req.file.path)) {
+      if (!fs.existsSync(SIGN_DIR_ABS)) fs.mkdirSync(SIGN_DIR_ABS, { recursive: true });
+      fs.renameSync(req.file.path, targetAbs);
+    } else if (req.file.buffer) {
+      fs.writeFileSync(targetAbs, req.file.buffer);
+    } else {
+      return res.status(400).json({ message: "Invalid uploaded file" });
+    }
+
+    // 4) Cập nhật DB theo format ../../uploads/...
+    const dbPath = `../../uploads/sign/${id_users}${ext}`;
     user.signature_image = dbPath;
     await user.save();
 
@@ -58,33 +85,44 @@ const uploadSignature = async (req, res) => {
   }
 };
 
-/** JSON: đường dẫn hiện tại */
 const getSignature = async (req, res) => {
   try {
     const { id_users } = req.params;
+    if (!ensureId(id_users)) return res.status(400).json({ message: "Invalid user id" });
+
     const user = await User.findByPk(id_users);
     if (!user) return res.status(404).json({ message: "User not found" });
-    return res.status(200).json({ signature_image: user.signature_image || DEFAULT_DB_PATH });
+
+    return res.status(200).json({
+      signature_image: user.signature_image || DEFAULT_SIGNATURE_REL,
+    });
   } catch (err) {
     console.error("getSignature error:", err);
     return res.status(500).json({ message: "Error fetching signature", error: err.message });
   }
 };
 
-/** Trả file ảnh chữ ký (dùng cho FE) */
 const getSignatureFile = async (req, res) => {
   try {
     const { id_users } = req.params;
+    if (!ensureId(id_users)) return res.status(400).send("Invalid user id");
+
     const user = await User.findByPk(id_users);
     if (!user) return res.status(404).send("User not found");
 
-    const candidate = user.signature_image || DEFAULT_DB_PATH;
-    let abs = dbPathToAbs(candidate);
+    let abs = null;
 
-    if (!fs.existsSync(abs)) {
-      abs = path.join(SIGN_DIR, "ticket.png");
-      if (!fs.existsSync(abs)) return res.status(404).send("Signature not found");
+    // 1) Ưu tiên đường dẫn trong DB nếu tồn tại file
+    if (user.signature_image) {
+      const candidate = resolveAbs(user.signature_image);
+      if (fs.existsSync(candidate)) abs = candidate;
     }
+
+    // 2) Nếu không có/không tồn tại → tìm theo mẫu <id>.<ext>
+    if (!abs) abs = findExistingSignaturePathAbs(id_users);
+
+    // 3) Nếu vẫn không có → 404 (trường hợp file mặc định cũng không tồn tại)
+    if (!fs.existsSync(abs)) return res.status(404).send("Signature not found");
 
     res.set("Cache-Control", "no-store");
     return res.sendFile(abs);
@@ -94,22 +132,16 @@ const getSignatureFile = async (req, res) => {
   }
 };
 
-/** Lưu chữ ký vẽ tay (dataURL) – nhận JSON hoặc text/plain */
+/** KÝ TAY: luôn ghi đè <id_users>.png và xoá mọi biến thể trước đó */
 const saveDrawnSignature = async (req, res) => {
   try {
     const { id_users } = req.params;
+    if (!ensureId(id_users)) return res.status(400).json({ message: "Invalid user id" });
 
     let raw = null;
     if (typeof req.body === "string") raw = req.body.trim();
     else if (req.body && typeof req.body === "object") {
-      raw =
-        req.body.dataURL ||
-        req.body.dataUrl ||
-        req.body.signature ||
-        req.body.image ||
-        req.body.base64 ||
-        null;
-      if (typeof raw === "string") raw = raw.trim();
+      raw = (req.body.dataURL || req.body.dataUrl || req.body.signature || req.body.image || req.body.base64 || "").trim();
     }
     if (!raw) return res.status(400).json({ message: "Invalid signature dataURL" });
 
@@ -117,26 +149,22 @@ const saveDrawnSignature = async (req, res) => {
       const b64 = raw.includes(",") ? raw.split(",").pop() : raw;
       raw = `data:image/png;base64,${b64}`;
     }
-
     const parts = raw.split(",");
     if (parts.length < 2) return res.status(400).json({ message: "Invalid signature dataURL" });
     const buffer = Buffer.from(parts[1], "base64");
     if (!buffer?.length) return res.status(400).json({ message: "Invalid signature dataURL" });
 
+    // 1) Xoá hết biến thể cũ
+    removeAllVariants(id_users);
+
+    // 2) Ghi đè PNG theo tên cố định
     const filename = `${id_users}.png`;
-    const absPath = path.join(SIGN_DIR, filename);
+    const absPath = path.join(SIGN_DIR_ABS, filename);
     fs.writeFileSync(absPath, buffer);
 
+    // 3) Cập nhật DB path
     const user = await User.findByPk(id_users);
     if (!user) return res.status(404).json({ message: "User not found" });
-
-    if (
-      user.signature_image &&
-      !isDefault(user.signature_image) &&
-      !user.signature_image.endsWith(`/${filename}`)
-    ) {
-      safeUnlinkDbPath(user.signature_image);
-    }
 
     const dbPath = `../../uploads/sign/${filename}`;
     user.signature_image = dbPath;
@@ -152,15 +180,17 @@ const saveDrawnSignature = async (req, res) => {
   }
 };
 
-/** Xoá chữ ký -> reset mặc định */
+/** XÓA: xóa file (mọi biến thể) + set default */
 const deleteSignature = async (req, res) => {
   try {
     const { id_users } = req.params;
+    if (!ensureId(id_users)) return res.status(400).json({ message: "Invalid user id" });
+
     const user = await User.findByPk(id_users);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    safeUnlinkDbPath(user.signature_image);
-    user.signature_image = DEFAULT_DB_PATH;
+    removeAllVariants(id_users); // xóa file khỏi ổ đĩa
+    user.signature_image = DEFAULT_SIGNATURE_REL;
     await user.save();
 
     return res.status(200).json({

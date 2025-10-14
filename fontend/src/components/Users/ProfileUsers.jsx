@@ -103,7 +103,7 @@ const ProfileUsers = () => {
   const drawingRef = useRef(false);
   const lastRef = useRef({ x: 0, y: 0 });
 
-  // ✅ Luôn load ảnh chữ ký qua API; backend tự fallback ticket.png
+  // ✅ Luôn load ảnh chữ ký qua API; backend tự fallback ảnh mặc định
   const signatureUrl = useMemo(() => {
     if (!user?.id_users) return "";
     const bust = `${(user?.updated_at && new Date(user.updated_at).getTime()) || 0}-${sigVer}`;
