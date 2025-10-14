@@ -59,10 +59,12 @@ app.use('/api/repairs',repairRoutes)
 app.use('/api/assignments',AssignTech)
 
 // ==============================Signature======================================
-// Public ảnh chữ ký từ backend/src/upload/sign
+
+// Body parsers (đủ lớn cho dataURL)
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true, limit: "5mb" }));
-app.use(express.text({ type: "text/plain", limit: "5mb" })); // để nhận dataURL raw để nhận dataURL raw
+app.use(express.text({ type: "text/plain", limit: "5mb" })); // chỉ cho text/plain
+
 
 app.use(
   "/uploads",
@@ -74,8 +76,14 @@ app.use(
   })
 );
 
-// Routes chữ ký
+
 app.use("/api/signatures", signatureRoutes);
+
+// (tuỳ chọn) middleware bắt lỗi cuối cùng để log 500 rõ ràng
+app.use((err, _req, res, _next) => {
+  console.error("UNCAUGHT ERROR:", err.stack || err);
+  res.status(500).json({ message: "Internal Server Error", error: err.message });
+})
 
 sequelize
   .sync()

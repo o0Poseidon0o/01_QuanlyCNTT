@@ -6,11 +6,11 @@ import { createRepair } from "../../services/repairsApi";
 const API_BASE =
   process.env.NODE_ENV === "production" ? "/api" : "http://localhost:5000/api";
 
-// DiceBear v7 (domain mới)
 const DEFAULT_AVT =
   "https://api.dicebear.com/7.x/adventurer-neutral/svg?seed=default";
 
 const PAGE_SIZE_DEFAULT = 8;
+const SIGNATURE_MAX_MB = 5; // khớp mặc định Multer 5MB
 
 const ProfileUsers = () => {
   const [userId] = useState(
@@ -24,7 +24,7 @@ const ProfileUsers = () => {
   const [roles, setRoles] = useState([]);
   const [devices, setDevices] = useState([]);
 
-  // ===== Tickets state =====
+  // Tickets
   const [myTickets, setMyTickets] = useState([]);
   const [ticketsLoading, setTicketsLoading] = useState(false);
   const [ticketsError, setTicketsError] = useState("");
@@ -32,7 +32,6 @@ const ProfileUsers = () => {
   const [ticketPage, setTicketPage] = useState(1);
   const [ticketPageSize, setTicketPageSize] = useState(PAGE_SIZE_DEFAULT);
 
-  // Tabs trạng thái
   const STATUS_TABS = useMemo(
     () => [
       { key: "all", label: "Tất cả" },
@@ -48,7 +47,7 @@ const ProfileUsers = () => {
   );
   const [ticketTab, setTicketTab] = useState("all");
 
-  // ===== Modal đổi mật khẩu =====
+  // Đổi mật khẩu
   const [showPwdModal, setShowPwdModal] = useState(false);
   const [cpNew, setCpNew] = useState("");
   const [cpConfirm, setCpConfirm] = useState("");
@@ -94,7 +93,7 @@ const ProfileUsers = () => {
     }
   };
 
-  // ====== Signature (upload/draw/delete) ======
+  // ===== Signature =====
   const [sigMsg, setSigMsg] = useState({ type: "", text: "" });
   const [sigLoading, setSigLoading] = useState(false);
 
@@ -104,33 +103,95 @@ const ProfileUsers = () => {
   const drawingRef = useRef(false);
   const lastRef = useRef({ x: 0, y: 0 });
 
-  // ✅ URL chữ ký (đọc trực tiếp từ /uploads/sign ở backend)
-  const signatureUrl = useMemo(() => {
-    if (!user) return "";
-    const raw = String(user?.signature_image || "").trim();
-    const HOST = API_BASE.replace("/api", "");
-    const bust = user?.updated_at
+  // Các GET endpoint khả dĩ (tự thử lần lượt khi lỗi 404/500)
+  const sigGetCandidates = useMemo(() => {
+    if (!user?.id_users) return [];
+    const v = user?.updated_at
       ? `?v=${new Date(user.updated_at).getTime()}`
       : `?v=${Date.now()}`;
-
-    // BE trả /uploads/sign/<id>.png -> dùng trực tiếp
-    if (raw.startsWith("/uploads/")) return `${HOST}${raw}${bust}`;
-
-    // Nếu chưa có -> mặc định ticket.png trong uploads
-    return `${HOST}/uploads/sign/ticket.png${bust}`;
+    return [
+      `${API_BASE}/signatures/file/${user.id_users}${v}`,
+      `${API_BASE}/signatures/${user.id_users}${v}`,
+      `${API_BASE}/users/${user.id_users}/signature${v}`,
+    ];
   }, [user]);
+  const [sigGetIdx, setSigGetIdx] = useState(0);
+
+  const signatureUrl = sigGetCandidates[sigGetIdx] || "";
+
+  // Helpers: post lần lượt thử nhiều endpoint
+  const postToAny = async (urls, formDataOrBody, config) => {
+    let lastErr = null;
+    for (const url of urls) {
+      try {
+        const res = await axios.post(url, formDataOrBody, config);
+        return res?.data;
+      } catch (err) {
+        lastErr = err;
+        // thử url tiếp theo
+      }
+    }
+    throw lastErr || new Error("Không gọi được endpoint upload chữ ký.");
+  };
+
+  // Thử nhiều tên field cho multer
+  const uploadSignatureFile = async (uid, file) => {
+    const urlCandidates = [
+      `${API_BASE}/signatures/upload/${uid}`,
+      `${API_BASE}/users/${uid}/signature`,
+      `${API_BASE}/users/${uid}/signature/upload`,
+      `${API_BASE}/users/signature/${uid}`,
+    ];
+    const fieldCandidates = ["signature", "file", "signature_image"];
+
+    let lastErr = null;
+    for (const field of fieldCandidates) {
+      try {
+        const fd = new FormData();
+        fd.append(field, file);
+        // KHÔNG set Content-Type, axios tự set multipart boundary
+        const data = await postToAny(urlCandidates, fd);
+        return data;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr || new Error("Không upload được chữ ký (field không khớp).");
+  };
 
   const inputFileRef = useRef(null);
   const onClickUploadSig = () => inputFileRef.current?.click();
 
+  const formatAxiosErr = (err) => {
+    const status = err?.response?.status;
+    const msg =
+      err?.response?.data?.message ||
+      err?.response?.data?.error ||
+      err?.message ||
+      "Lỗi không xác định.";
+    return { status, msg };
+  };
+
   const handleChooseSigFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     setSigMsg({ type: "", text: "" });
 
-    const allowed = ["image/png", "image/jpeg", "image/svg+xml"];
+    const allowed = ["image/png", "image/jpeg", "image/svg+xml", "image/webp"];
     if (!allowed.includes(file.type)) {
-      setSigMsg({ type: "error", text: "Chỉ cho phép PNG/JPG/SVG." });
+      setSigMsg({ type: "error", text: "Chỉ cho phép PNG/JPG/SVG/WEBP." });
+      e.target.value = "";
+      return;
+    }
+    const maxBytes = SIGNATURE_MAX_MB * 1024 * 1024;
+    if (file.size > maxBytes) {
+      setSigMsg({
+        type: "error",
+        text: `Ảnh quá lớn (${(file.size / 1024 / 1024).toFixed(
+          2
+        )}MB). Giới hạn ${SIGNATURE_MAX_MB}MB.`,
+      });
       e.target.value = "";
       return;
     }
@@ -142,31 +203,32 @@ const ProfileUsers = () => {
 
     setSigLoading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
+      const data = await uploadSignatureFile(userId, file);
+      const stored = data?.signature_image || data?.path || data?.url || "";
 
-      // Không tự set Content-Type để Axios tự thêm boundary
-      const res = await axios.post(`${API_BASE}/signatures/upload/${userId}`, fd);
-
-      const stored = res?.data?.signature_image;
-      if (stored) {
+      if (stored !== undefined) {
         setUser((u) => ({
           ...(u || {}),
-          signature_image: stored,           // ví dụ: /uploads/sign/5738.png
+          signature_image: stored,
           updated_at: new Date().toISOString(),
         }));
         setSigMsg({ type: "success", text: "Tải chữ ký thành công." });
+        setSigGetIdx(0); // reset thứ tự thử GET
       } else {
-        setSigMsg({
-          type: "error",
-          text: "Tải lên không trả về đường dẫn chữ ký.",
-        });
+        setSigMsg({ type: "error", text: "Tải lên không trả về đường dẫn chữ ký." });
       }
     } catch (err) {
+      const { status, msg } = formatAxiosErr(err);
       setSigMsg({
         type: "error",
-        text: err?.response?.data?.message || "Tải chữ ký thất bại.",
+        text:
+          status === 413
+            ? "Tệp quá lớn (413 Payload Too Large). Hãy giảm kích thước ảnh."
+            : `Upload lỗi${status ? ` (HTTP ${status})` : ""}: ${msg}`,
       });
+      // hiện log chi tiết trên console cho dev
+      // eslint-disable-next-line no-console
+      console.error("Upload signature error:", err);
     } finally {
       setSigLoading(false);
       e.target.value = "";
@@ -184,21 +246,23 @@ const ProfileUsers = () => {
       await axios.delete(`${API_BASE}/signatures/${userId}`);
       setUser((u) => ({
         ...(u || {}),
-        signature_image: "", // để hook signatureUrl tự fallback về /uploads/sign/ticket.png
+        signature_image: "",
         updated_at: new Date().toISOString(),
       }));
       setSigMsg({ type: "success", text: "Đã xoá chữ ký." });
+      setSigGetIdx(0);
     } catch (err) {
+      const { status, msg } = formatAxiosErr(err);
       setSigMsg({
         type: "error",
-        text: err?.response?.data?.message || "Xoá chữ ký thất bại.",
+        text: `Xoá chữ ký lỗi${status ? ` (HTTP ${status})` : ""}: ${msg}`,
       });
     } finally {
       setSigLoading(false);
     }
   };
 
-  // ===== Modal vẽ chữ ký =====
+  // Vẽ chữ ký
   const openDrawModal = () => {
     setSigMsg({ type: "", text: "" });
     setShowDrawModal(true);
@@ -278,48 +342,52 @@ const ProfileUsers = () => {
     setSigMsg({ type: "", text: "" });
 
     try {
-      const dataUrl = canvasRef.current.toDataURL("image/png");
+      await new Promise((resolve, reject) => {
+        canvasRef.current.toBlob(
+          async (blob) => {
+            try {
+              if (!blob) throw new Error("Không tạo được ảnh từ canvas.");
+              const file = new File([blob], `signature_${userId}.png`, {
+                type: "image/png",
+              });
+              const data = await uploadSignatureFile(userId, file);
+              const stored = data?.signature_image || data?.path || data?.url || "";
 
-      // Ưu tiên gửi JSON { dataUrl }; nếu 400 thì fallback text/plain
-      let res;
-      try {
-        res = await axios.post(`${API_BASE}/signatures/draw/${userId}`, { dataUrl });
-      } catch (err) {
-        if (err?.response?.status === 400) {
-          res = await axios.post(`${API_BASE}/signatures/draw/${userId}`, dataUrl, {
-            headers: { "Content-Type": "text/plain" },
-          });
-        } else {
-          throw err;
-        }
-      }
-
-      const stored = res?.data?.signature_image;
-      if (stored) {
-        setUser((u) => ({
-          ...(u || {}),
-          signature_image: stored,          // /uploads/sign/<id>.png
-          updated_at: new Date().toISOString(),
-        }));
-        setSigMsg({ type: "success", text: "Đã lưu chữ ký vẽ tay." });
-        setShowDrawModal(false);
-      } else {
-        setSigMsg({
-          type: "error",
-          text: "Lưu không trả về đường dẫn chữ ký.",
-        });
-      }
+              if (stored !== undefined) {
+                setUser((u) => ({
+                  ...(u || {}),
+                  signature_image: stored,
+                  updated_at: new Date().toISOString(),
+                }));
+                setSigMsg({ type: "success", text: "Đã lưu chữ ký vẽ tay." });
+                setShowDrawModal(false);
+                setSigGetIdx(0);
+                resolve();
+              } else {
+                reject(new Error("Lưu không trả về đường dẫn chữ ký."));
+              }
+            } catch (err) {
+              reject(err);
+            }
+          },
+          "image/png",
+          0.9
+        );
+      });
     } catch (err) {
+      const { status, msg } = formatAxiosErr(err);
       setSigMsg({
         type: "error",
-        text: err?.response?.data?.message || "Lưu chữ ký thất bại.",
+        text: `Lưu chữ ký lỗi${status ? ` (HTTP ${status})` : ""}: ${msg}`,
       });
+      // eslint-disable-next-line no-console
+      console.error("Save drawn signature error:", err);
     } finally {
       setSigLoading(false);
     }
   };
 
-  // ===== Helpers =====
+  // Helpers
   const canonical = (s) =>
     String(s || "")
       .normalize("NFD")
@@ -400,7 +468,7 @@ const ProfileUsers = () => {
 
   const formatVND = (n) => `${(Number(n) || 0).toLocaleString("vi-VN")} đ`;
 
-  // ---- Data fetching: user
+  // Fetch user
   useEffect(() => {
     const fetchUser = async (id) => {
       if (!id) return;
@@ -434,7 +502,7 @@ const ProfileUsers = () => {
     if (userId) fetchUser(userId);
   }, [userId]);
 
-  // ---- Data fetching: departments
+  // Fetch departments
   useEffect(() => {
     const fetchDepartments = async () => {
       try {
@@ -447,7 +515,7 @@ const ProfileUsers = () => {
     fetchDepartments();
   }, []);
 
-  // ---- Data fetching: roles
+  // Fetch roles
   useEffect(() => {
     const fetchRoles = async () => {
       const tryEndpoints = [
@@ -471,7 +539,7 @@ const ProfileUsers = () => {
     fetchRoles();
   }, []);
 
-  // ---- Data fetching: devices
+  // Fetch devices
   useEffect(() => {
     const fetchDevices = async () => {
       if (!userId) return;
@@ -535,7 +603,7 @@ const ProfileUsers = () => {
     fetchDevices();
   }, [userId]);
 
-  // ---- Data fetching: my tickets
+  // Fetch my tickets
   const fetchMyTickets = async () => {
     if (!userId) return;
     setTicketsLoading(true);
@@ -600,10 +668,9 @@ const ProfileUsers = () => {
 
   useEffect(() => {
     fetchMyTickets();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  }, [userId]); // eslint-disable-line
 
-  // ===== Modal tạo ticket sửa chữa =====
+  // Modal tạo ticket
   const NEW_TICKET_DEFAULT = {
     id_devices: "",
     title: "",
@@ -669,7 +736,7 @@ const ProfileUsers = () => {
     }
   };
 
-  // ---- Filter + phân trang
+  // Lọc + phân trang
   const filteredByTab = useMemo(() => {
     if (ticketTab === "all") return myTickets;
     return myTickets.filter((t) => String(t.status || "").toLowerCase() === ticketTab);
@@ -773,7 +840,7 @@ const ProfileUsers = () => {
                     </div>
                   </div>
 
-                  {/* ✅ Signature block */}
+                  {/* Signature block */}
                   <div className="mt-4 w-full">
                     <div className="text-xs font-semibold text-neutral-700 mb-1">
                       Chữ ký
@@ -791,14 +858,16 @@ const ProfileUsers = () => {
 
                       <div className="rounded-lg bg-white border border-neutral-200 p-2 flex items-center justify-center">
                         <img
-                          src={signatureUrl}
+                          key={signatureUrl}
+                          src={signatureUrl || ""}
                           alt="Signature"
                           className="max-h-16 object-contain"
                           loading="lazy"
-                          onError={(e) => {
-                            const HOST = API_BASE.replace("/api", "");
-                            e.currentTarget.src = `${HOST}/uploads/sign/ticket.png`;
-                          }}
+                          onError={() =>
+                            setSigGetIdx((i) =>
+                              Math.min(i + 1, (sigGetCandidates?.length || 1) - 1)
+                            )
+                          }
                         />
                       </div>
 
@@ -806,7 +875,9 @@ const ProfileUsers = () => {
                         <input
                           ref={inputFileRef}
                           type="file"
-                          accept="image/png,image/jpeg,image/svg+xml"
+                          name="signature"
+                          accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                          capture="environment"
                           className="hidden"
                           onChange={handleChooseSigFile}
                         />
@@ -952,7 +1023,7 @@ const ProfileUsers = () => {
             </div>
           </div>
 
-          {/* ===== Ticket của tôi ===== */}
+          {/* Tickets */}
           <div className="bg-white border border-neutral-200 rounded-xl">
             <div className="p-4 border-b border-neutral-200">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">

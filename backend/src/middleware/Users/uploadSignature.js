@@ -1,23 +1,29 @@
 // src/middleware/Users/uploadSignature.js
-const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
+const multer = require("multer");
 
-const SIGN_DIR = path.join(__dirname, "../../uploads/sign");
+const SIGN_DIR = path.resolve(__dirname, "../../uploads/sign"); // backend/src/uploads/sign
 if (!fs.existsSync(SIGN_DIR)) fs.mkdirSync(SIGN_DIR, { recursive: true });
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, SIGN_DIR),
   filename: (req, file, cb) => {
-    // lưu tạm tên gốc, controller sẽ rename sang <id_users>.<ext>
-    cb(null, `${Date.now()}_${file.originalname}`);
+    const id = String(req.params.id_users || "unknown");
+    let ext = ".png";
+    if (file.mimetype === "image/jpeg") ext = ".jpg";
+    else if (file.mimetype === "image/svg+xml") ext = ".svg";
+    cb(null, `${id}${ext}`);
   },
 });
 
 const fileFilter = (req, file, cb) => {
-  const allowed = ["image/png", "image/jpeg", "image/jpg", "image/svg+xml", "image/webp"];
-  if (allowed.includes(file.mimetype)) cb(null, true);
-  else cb(new Error("Only image files are allowed"), false);
+  const ok = ["image/png", "image/jpeg", "image/svg+xml"].includes(file.mimetype);
+  cb(ok ? null : new Error("Only PNG/JPG/SVG allowed"), ok);
 };
 
-module.exports = multer({ storage, fileFilter, limits: { fileSize: 5 * 1024 * 1024 } });
+module.exports = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
