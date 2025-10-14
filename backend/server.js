@@ -25,7 +25,8 @@ const repairRoutes = require('./src/routes/repairTech/repairRoutes');
 const AssignTech = require('./src/routes/Technologyequipment/deviceAssignRoutes');
 // ==============================RolesAdmin======================================
 const roleAdminRoutes = require('./src/routes/RolesAdmin/roleAdminRoutes');
-
+// ==============================Signature======================================
+const signatureRoutes = require('./src/routes/users/signatureRoutes');
 require('dotenv').config();
 const app = express();
 app.use(cors());
@@ -56,6 +57,26 @@ app.use('/api/stasusers',stasusersRouters)
 app.use('/api/repairs',repairRoutes)
 // ==============================Technology======================================
 app.use('/api/assignments',AssignTech)
+
+// ==============================Signature======================================
+// Public ảnh chữ ký từ backend/src/upload/sign
+app.use(express.json({ limit: "5mb" }));
+app.use(express.urlencoded({ extended: true, limit: "5mb" }));
+app.use(express.text({ type: "text/plain", limit: "5mb" })); // để nhận dataURL raw để nhận dataURL raw
+
+app.use(
+  "/uploads",
+  express.static(path.join(__dirname, "src/uploads"), {
+    fallthrough: true,
+    etag: true,
+    maxAge: "7d",
+    extensions: ["png", "jpg", "jpeg", "svg", "gif", "webp"],
+  })
+);
+
+// Routes chữ ký
+app.use("/api/signatures", signatureRoutes);
+
 sequelize
   .sync()
   .then(() => {

@@ -1,14 +1,14 @@
 // src/components/Users/ProfileUsers.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "../../lib/httpClient";
 import { createRepair } from "../../services/repairsApi";
 
 const API_BASE =
   process.env.NODE_ENV === "production" ? "/api" : "http://localhost:5000/api";
 
-// DiceBear v7 (đã bỏ domain cũ)
-const DEFAULT_AVT = "https://api.dicebear.com/7.x/adventurer-neutral/svg?seed=default";
-
+// DiceBear v7 (domain mới)
+const DEFAULT_AVT =
+  "https://api.dicebear.com/7.x/adventurer-neutral/svg?seed=default";
 
 const PAGE_SIZE_DEFAULT = 8;
 
@@ -21,7 +21,7 @@ const ProfileUsers = () => {
   const [error, setError] = useState("");
 
   const [departments, setDepartments] = useState([]);
-  const [roles, setRoles] = useState([]); // NEW: map id_roles -> tên
+  const [roles, setRoles] = useState([]);
   const [devices, setDevices] = useState([]);
 
   // ===== Tickets state =====
@@ -51,7 +51,7 @@ const ProfileUsers = () => {
   // ===== Modal đổi mật khẩu =====
   const [showPwdModal, setShowPwdModal] = useState(false);
   const [cpNew, setCpNew] = useState("");
-  const [cpConfirm, setCpConfirm] = useState(""); // <-- ĐÃ SỬA
+  const [cpConfirm, setCpConfirm] = useState("");
   const [cpShow, setCpShow] = useState({ nw: false, cf: false });
   const [cpMsg, setCpMsg] = useState({ type: "", text: "" });
   const [cpLoading, setCpLoading] = useState(false);
@@ -94,77 +94,230 @@ const ProfileUsers = () => {
     }
   };
 
-  // ===== Modal tạo ticket sửa chữa =====
-  const NEW_TICKET_DEFAULT = {
-    id_devices: "",
-    title: "",
-    issue_description: "",
-    severity: "medium",
-    priority: "normal",
-    sla_hours: 24,
-  };
-  const [showCreateTicket, setShowCreateTicket] = useState(false);
-  const [ntForm, setNtForm] = useState(NEW_TICKET_DEFAULT);
-  const [ntMsg, setNtMsg] = useState({ type: "", text: "" });
-  const [ntLoading, setNtLoading] = useState(false);
+  // ====== Signature (upload/draw/delete) ======
+  const [sigMsg, setSigMsg] = useState({ type: "", text: "" });
+  const [sigLoading, setSigLoading] = useState(false);
 
-  const openCreateTicket = (prefillDeviceId) => {
-    setNtMsg({ type: "", text: "" });
-    setNtForm((f) => ({
-      ...f,
-      id_devices: prefillDeviceId || devices[0]?.id_devices || "",
-    }));
-    setShowCreateTicket(true);
-  };
+  const [showDrawModal, setShowDrawModal] = useState(false);
+  const canvasRef = useRef(null);
+  const ctxRef = useRef(null);
+  const drawingRef = useRef(false);
+  const lastRef = useRef({ x: 0, y: 0 });
 
-  const submitCreateTicket = async (e) => {
-    e?.preventDefault?.();
-    setNtMsg({ type: "", text: "" });
+  // ✅ URL chữ ký (đọc trực tiếp từ /uploads/sign ở backend)
+  const signatureUrl = useMemo(() => {
+    if (!user) return "";
+    const raw = String(user?.signature_image || "").trim();
+    const HOST = API_BASE.replace("/api", "");
+    const bust = user?.updated_at
+      ? `?v=${new Date(user.updated_at).getTime()}`
+      : `?v=${Date.now()}`;
 
-    if (!userId) {
-      setNtMsg({ type: "error", text: "Thiếu ID người dùng." });
-      return;
-    }
-    if (!ntForm.id_devices) {
-      setNtMsg({ type: "error", text: "Vui lòng chọn thiết bị." });
-      return;
-    }
-    if (!String(ntForm.title || "").trim()) {
-      setNtMsg({ type: "error", text: "Vui lòng nhập tiêu đề." });
-      return;
-    }
+    // BE trả /uploads/sign/<id>.png -> dùng trực tiếp
+    if (raw.startsWith("/uploads/")) return `${HOST}${raw}${bust}`;
 
-    setNtLoading(true);
-    try {
-      const payload = { ...ntForm, reported_by: Number(userId) };
-      const res = await createRepair(payload);
-      const idNew = res?.id_repair;
-
-      setNtMsg({
-        type: "success",
-        text: `Tạo ticket thành công${idNew ? ` (#${idNew})` : ""}.`,
-      });
-
-      setTimeout(() => {
-        setNtForm(NEW_TICKET_DEFAULT);
-        setShowCreateTicket(false);
-        refreshMyTickets();
-      }, 800);
-    } catch (err) {
-      const msg =
-        err?.response?.data?.message ||
-        "Tạo ticket thất bại. Vui lòng kiểm tra quyền & dữ liệu.";
-      setNtMsg({ type: "error", text: msg });
-    } finally {
-      setNtLoading(false);
-    }
-  };
-
-  // ---- Derived
-  const avatarUrl = useMemo(() => {
-    if (!user?.id_users) return DEFAULT_AVT;
-    return `${API_BASE}/avatars/${user.id_users}?t=${user?.updated_at || ""}`;
+    // Nếu chưa có -> mặc định ticket.png trong uploads
+    return `${HOST}/uploads/sign/ticket.png${bust}`;
   }, [user]);
+
+  const inputFileRef = useRef(null);
+  const onClickUploadSig = () => inputFileRef.current?.click();
+
+  const handleChooseSigFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSigMsg({ type: "", text: "" });
+
+    const allowed = ["image/png", "image/jpeg", "image/svg+xml"];
+    if (!allowed.includes(file.type)) {
+      setSigMsg({ type: "error", text: "Chỉ cho phép PNG/JPG/SVG." });
+      e.target.value = "";
+      return;
+    }
+    if (!userId) {
+      setSigMsg({ type: "error", text: "Thiếu ID người dùng." });
+      e.target.value = "";
+      return;
+    }
+
+    setSigLoading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+
+      // Không tự set Content-Type để Axios tự thêm boundary
+      const res = await axios.post(`${API_BASE}/signatures/upload/${userId}`, fd);
+
+      const stored = res?.data?.signature_image;
+      if (stored) {
+        setUser((u) => ({
+          ...(u || {}),
+          signature_image: stored,           // ví dụ: /uploads/sign/5738.png
+          updated_at: new Date().toISOString(),
+        }));
+        setSigMsg({ type: "success", text: "Tải chữ ký thành công." });
+      } else {
+        setSigMsg({
+          type: "error",
+          text: "Tải lên không trả về đường dẫn chữ ký.",
+        });
+      }
+    } catch (err) {
+      setSigMsg({
+        type: "error",
+        text: err?.response?.data?.message || "Tải chữ ký thất bại.",
+      });
+    } finally {
+      setSigLoading(false);
+      e.target.value = "";
+    }
+  };
+
+  const handleDeleteSignature = async () => {
+    if (!userId) {
+      setSigMsg({ type: "error", text: "Thiếu ID người dùng." });
+      return;
+    }
+    setSigMsg({ type: "", text: "" });
+    setSigLoading(true);
+    try {
+      await axios.delete(`${API_BASE}/signatures/${userId}`);
+      setUser((u) => ({
+        ...(u || {}),
+        signature_image: "", // để hook signatureUrl tự fallback về /uploads/sign/ticket.png
+        updated_at: new Date().toISOString(),
+      }));
+      setSigMsg({ type: "success", text: "Đã xoá chữ ký." });
+    } catch (err) {
+      setSigMsg({
+        type: "error",
+        text: err?.response?.data?.message || "Xoá chữ ký thất bại.",
+      });
+    } finally {
+      setSigLoading(false);
+    }
+  };
+
+  // ===== Modal vẽ chữ ký =====
+  const openDrawModal = () => {
+    setSigMsg({ type: "", text: "" });
+    setShowDrawModal(true);
+    setTimeout(() => initCanvas(), 50);
+  };
+  const closeDrawModal = () => setShowDrawModal(false);
+
+  const initCanvas = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = 480;
+    const cssH = 180;
+    canvas.style.width = cssW + "px";
+    canvas.style.height = cssH + "px";
+    canvas.width = cssW * dpr;
+    canvas.height = cssH * dpr;
+
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#111827";
+    ctx.lineWidth = 2.5;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, cssW, cssH);
+
+    ctxRef.current = ctx;
+  };
+
+  const getPos = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    if (e.touches?.length) {
+      const t = e.touches[0];
+      return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+    }
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+
+  const onStartDraw = (e) => {
+    e.preventDefault();
+    drawingRef.current = true;
+    lastRef.current = getPos(e);
+  };
+  const onMoveDraw = (e) => {
+    if (!drawingRef.current) return;
+    const ctx = ctxRef.current;
+    if (!ctx) return;
+    const p = getPos(e);
+    ctx.beginPath();
+    ctx.moveTo(lastRef.current.x, lastRef.current.y);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+    lastRef.current = p;
+  };
+  const onEndDraw = () => {
+    drawingRef.current = false;
+  };
+  const onClearCanvas = () => {
+    const canvas = canvasRef.current;
+    const ctx = ctxRef.current;
+    if (!canvas || !ctx) return;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = "#111827";
+  };
+
+  const onSaveDrawing = async () => {
+    if (!canvasRef.current) return;
+    if (!userId) {
+      setSigMsg({ type: "error", text: "Thiếu ID người dùng." });
+      return;
+    }
+    setSigLoading(true);
+    setSigMsg({ type: "", text: "" });
+
+    try {
+      const dataUrl = canvasRef.current.toDataURL("image/png");
+
+      // Ưu tiên gửi JSON { dataUrl }; nếu 400 thì fallback text/plain
+      let res;
+      try {
+        res = await axios.post(`${API_BASE}/signatures/draw/${userId}`, { dataUrl });
+      } catch (err) {
+        if (err?.response?.status === 400) {
+          res = await axios.post(`${API_BASE}/signatures/draw/${userId}`, dataUrl, {
+            headers: { "Content-Type": "text/plain" },
+          });
+        } else {
+          throw err;
+        }
+      }
+
+      const stored = res?.data?.signature_image;
+      if (stored) {
+        setUser((u) => ({
+          ...(u || {}),
+          signature_image: stored,          // /uploads/sign/<id>.png
+          updated_at: new Date().toISOString(),
+        }));
+        setSigMsg({ type: "success", text: "Đã lưu chữ ký vẽ tay." });
+        setShowDrawModal(false);
+      } else {
+        setSigMsg({
+          type: "error",
+          text: "Lưu không trả về đường dẫn chữ ký.",
+        });
+      }
+    } catch (err) {
+      setSigMsg({
+        type: "error",
+        text: err?.response?.data?.message || "Lưu chữ ký thất bại.",
+      });
+    } finally {
+      setSigLoading(false);
+    }
+  };
 
   // ===== Helpers =====
   const canonical = (s) =>
@@ -173,7 +326,6 @@ const ProfileUsers = () => {
       .replace(/[\u0300-\u036f]/g, "")
       .toLowerCase();
 
-  // Map phòng ban + vai trò
   const deptMap = useMemo(() => {
     const m = {};
     (departments || []).forEach((d) => {
@@ -320,86 +472,68 @@ const ProfileUsers = () => {
   }, []);
 
   // ---- Data fetching: devices
-useEffect(() => {
-  const fetchDevices = async () => {
-    if (!userId) return;
+  useEffect(() => {
+    const fetchDevices = async () => {
+      if (!userId) return;
 
-    // 1) LOGIC CŨ: lấy toàn bộ devices rồi lọc theo id_users
-    let baseDevices = [];
-    try {
-      const rAll = await axios.get(`${API_BASE}/devices/all`, {
-        headers: { "Cache-Control": "no-cache" },
-        params: { t: Date.now() },
-      });
-      const allDevices = Array.isArray(rAll.data) ? rAll.data : [];
-      baseDevices = allDevices
-        .filter((d) => String(d.id_users) === String(userId))
-        .map((d) => ({
-          id_devices: d.id_devices,
-          name_devices: d.name_devices,
-          note: d.DeviceNote || d.note || null,
-          start_time: null, // sẽ được update nếu có trong bảng cấp phát
-        }));
-    } catch {
-      baseDevices = [];
-    }
+      let baseDevices = [];
+      try {
+        const rAll = await axios.get(`${API_BASE}/devices/all`, {
+          headers: { "Cache-Control": "no-cache" },
+          params: { t: Date.now() },
+        });
+        const allDevices = Array.isArray(rAll.data) ? rAll.data : [];
+        baseDevices = allDevices
+          .filter((d) => String(d.id_users) === String(userId))
+          .map((d) => ({
+            id_devices: d.id_devices,
+            name_devices: d.name_devices,
+            note: d.DeviceNote || d.note || null,
+            start_time: null,
+          }));
+      } catch {
+        baseDevices = [];
+      }
 
-    // 2) UPDATE LÊN: lấy thêm danh sách thiết bị đang dùng từ cấp phát (không thay thế, chỉ merge)
-    try {
-      const rAssign = await axios.get(
-        `${API_BASE}/assignments/active-by-user/${userId}`,
-        { headers: { "Cache-Control": "no-cache" }, params: { t: Date.now() } }
-      );
-      const assigns = Array.isArray(rAssign.data) ? rAssign.data : [];
+      try {
+        const rAssign = await axios.get(
+          `${API_BASE}/assignments/active-by-user/${userId}`,
+          { headers: { "Cache-Control": "no-cache" }, params: { t: Date.now() } }
+        );
+        const assigns = Array.isArray(rAssign.data) ? rAssign.data : [];
 
-      // map assignment -> thiết bị
-      const assignDevices = assigns
-        .map((r) => ({
-          id_devices:
-            r.id_devices ??
-            r.Device?.id_devices ??
-            r.device?.id_devices ??
-            r.device_id,
-          name_devices:
-            r.Device?.name_devices ??
-            r.device?.name_devices ??
-            r.name_devices ??
-            "",
-          start_time: r.start_time || null,
-          note:
-            r.Device?.DeviceNote ??
-            r.Device?.note ??
-            r.device?.note ??
-            r.note ??
-            null,
-        }))
-        .filter((d) => d.id_devices);
+        const assignDevices = assigns
+          .map((r) => ({
+            id_devices:
+              r.id_devices ?? r.Device?.id_devices ?? r.device?.id_devices ?? r.device_id,
+            name_devices:
+              r.Device?.name_devices ?? r.device?.name_devices ?? r.name_devices ?? "",
+            start_time: r.start_time || null,
+            note:
+              r.Device?.DeviceNote ?? r.Device?.note ?? r.device?.note ?? r.note ?? null,
+          }))
+          .filter((d) => d.id_devices);
 
-      // merge: ưu tiên giữ base (logic cũ), nhưng nếu trùng ID có start_time thì cập nhật
-      const map = new Map();
-      baseDevices.forEach((d) => map.set(String(d.id_devices), d));
-      assignDevices.forEach((d) => {
-        const key = String(d.id_devices);
-        if (map.has(key)) {
-          // cập nhật start_time nếu có
-          const curr = map.get(key);
-          map.set(key, { ...curr, start_time: d.start_time ?? curr.start_time });
-        } else {
-          // thêm mới từ bảng cấp phát
-          map.set(key, d);
-        }
-      });
+        const map = new Map();
+        baseDevices.forEach((d) => map.set(String(d.id_devices), d));
+        assignDevices.forEach((d) => {
+          const key = String(d.id_devices);
+          if (map.has(key)) {
+            const curr = map.get(key);
+            map.set(key, { ...curr, start_time: d.start_time ?? curr.start_time });
+          } else {
+            map.set(key, d);
+          }
+        });
 
-      setDevices(Array.from(map.values()));
-    } catch {
-      // nếu API cấp phát lỗi, vẫn dùng danh sách gốc
-      setDevices(baseDevices);
-    }
-  };
+        setDevices(Array.from(map.values()));
+      } catch {
+        setDevices(baseDevices);
+      }
+    };
 
-  fetchDevices();
-}, [userId]);
-
+    fetchDevices();
+  }, [userId]);
 
   // ---- Data fetching: my tickets
   const fetchMyTickets = async () => {
@@ -468,6 +602,72 @@ useEffect(() => {
     fetchMyTickets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
+
+  // ===== Modal tạo ticket sửa chữa =====
+  const NEW_TICKET_DEFAULT = {
+    id_devices: "",
+    title: "",
+    issue_description: "",
+    severity: "medium",
+    priority: "normal",
+    sla_hours: 24,
+  };
+  const [showCreateTicket, setShowCreateTicket] = useState(false);
+  const [ntForm, setNtForm] = useState(NEW_TICKET_DEFAULT);
+  const [ntMsg, setNtMsg] = useState({ type: "", text: "" });
+  const [ntLoading, setNtLoading] = useState(false);
+
+  const openCreateTicket = (prefillDeviceId) => {
+    setNtMsg({ type: "", text: "" });
+    setNtForm((f) => ({
+      ...f,
+      id_devices: prefillDeviceId || devices[0]?.id_devices || "",
+    }));
+    setShowCreateTicket(true);
+  };
+
+  const submitCreateTicket = async (e) => {
+    e?.preventDefault?.();
+    setNtMsg({ type: "", text: "" });
+
+    if (!userId) {
+      setNtMsg({ type: "error", text: "Thiếu ID người dùng." });
+      return;
+    }
+    if (!ntForm.id_devices) {
+      setNtMsg({ type: "error", text: "Vui lòng chọn thiết bị." });
+      return;
+    }
+    if (!String(ntForm.title || "").trim()) {
+      setNtMsg({ type: "error", text: "Vui lòng nhập tiêu đề." });
+      return;
+    }
+
+    setNtLoading(true);
+    try {
+      const payload = { ...ntForm, reported_by: Number(userId) };
+      const res = await createRepair(payload);
+      const idNew = res?.id_repair;
+
+      setNtMsg({
+        type: "success",
+        text: `Tạo ticket thành công${idNew ? ` (#${idNew})` : ""}.`,
+      });
+
+      setTimeout(() => {
+        setNtForm(NEW_TICKET_DEFAULT);
+        setShowCreateTicket(false);
+        refreshMyTickets();
+      }, 800);
+    } catch (err) {
+      const msg =
+        err?.response?.data?.message ||
+        "Tạo ticket thất bại. Vui lòng kiểm tra quyền & dữ liệu.";
+      setNtMsg({ type: "error", text: msg });
+    } finally {
+      setNtLoading(false);
+    }
+  };
 
   // ---- Filter + phân trang
   const filteredByTab = useMemo(() => {
@@ -550,7 +750,11 @@ useEffect(() => {
                 <div className="flex flex-col items-center">
                   <div className="w-20 h-20 rounded-full overflow-hidden border border-neutral-200">
                     <img
-                      src={avatarUrl}
+                      src={
+                        user?.id_users
+                          ? `${API_BASE}/avatars/${user.id_users}?t=${user?.updated_at || ""}`
+                          : DEFAULT_AVT
+                      }
                       alt="Avatar"
                       className="w-full h-full object-cover object-center"
                       onError={(e) => (e.currentTarget.src = DEFAULT_AVT)}
@@ -568,6 +772,95 @@ useEffect(() => {
                       ID: {user.id_users}
                     </div>
                   </div>
+
+                  {/* ✅ Signature block */}
+                  <div className="mt-4 w-full">
+                    <div className="text-xs font-semibold text-neutral-700 mb-1">
+                      Chữ ký
+                    </div>
+
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white text-xs">
+                          ✔
+                        </span>
+                        <span className="text-[12px] text-emerald-700 font-medium">
+                          {user?.signature_image ? "Đã thiết lập" : "Chưa có"}
+                        </span>
+                      </div>
+
+                      <div className="rounded-lg bg-white border border-neutral-200 p-2 flex items-center justify-center">
+                        <img
+                          src={signatureUrl}
+                          alt="Signature"
+                          className="max-h-16 object-contain"
+                          loading="lazy"
+                          onError={(e) => {
+                            const HOST = API_BASE.replace("/api", "");
+                            e.currentTarget.src = `${HOST}/uploads/sign/ticket.png`;
+                          }}
+                        />
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <input
+                          ref={inputFileRef}
+                          type="file"
+                          accept="image/png,image/jpeg,image/svg+xml"
+                          className="hidden"
+                          onChange={handleChooseSigFile}
+                        />
+                        <button
+                          type="button"
+                          disabled={sigLoading}
+                          onClick={onClickUploadSig}
+                          className="px-2.5 py-1.5 text-xs rounded-lg border border-neutral-300 hover:bg-neutral-50"
+                        >
+                          {sigLoading ? "Đang tải..." : "Tải ảnh chữ ký"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={sigLoading}
+                          onClick={openDrawModal}
+                          className="px-2.5 py-1.5 text-xs rounded-lg border border-neutral-300 hover:bg-neutral-50"
+                        >
+                          Vẽ chữ ký
+                        </button>
+                        {!!user?.signature_image && (
+                          <button
+                            type="button"
+                            disabled={sigLoading}
+                            onClick={handleDeleteSignature}
+                            className="px-2.5 py-1.5 text-xs rounded-lg border border-rose-200 text-rose-700 hover:bg-rose-50"
+                          >
+                            Xoá
+                          </button>
+                        )}
+                      </div>
+
+                      {sigMsg.text && (
+                        <div
+                          className={`mt-2 text-[12px] rounded px-3 py-2 border ${
+                            sigMsg.type === "error"
+                              ? "bg-red-50 text-red-700 border-red-200"
+                              : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          }`}
+                        >
+                          {sigMsg.text}
+                        </div>
+                      )}
+
+                      <div className="mt-2 text-center">
+                        <div className="text-[12px] text-neutral-900 font-medium leading-tight">
+                          {user?.username || "—"}
+                        </div>
+                        <div className="text-[11px] text-neutral-500">
+                          {roleName}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {/* /Signature block */}
                 </div>
               </div>
             )
@@ -598,6 +891,15 @@ useEffect(() => {
                 <Row label="Bộ phận" value={departmentName} />
                 <Row label="Mã bộ phận" value={user.id_departments || "—"} />
                 <Row label="Vai trò" value={roleName} />
+                <Row
+                  label="Chữ ký"
+                  value={
+                    <span className="inline-flex items-center gap-1 text-emerald-700">
+                      <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white text-[10px]">✔</span>
+                      {user?.signature_image ? "Đã thiết lập" : "Chưa có"}
+                    </span>
+                  }
+                />
               </div>
             ) : null}
           </div>
@@ -642,16 +944,6 @@ useEffect(() => {
                         ))}
                       </tbody>
                     </table>
-                  </div>
-
-                  <div className="p-4">
-                    <button
-                      type="button"
-                      onClick={() => openCreateTicket()}
-                      className="px-3 py-2 rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50 text-sm"
-                    >
-                      Tạo ticket sửa chữa (chọn thiết bị)
-                    </button>
                   </div>
                 </>
               ) : (
@@ -916,6 +1208,64 @@ useEffect(() => {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal vẽ chữ ký */}
+      {showDrawModal && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/40" onClick={closeDrawModal} />
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl bg-white rounded-xl shadow-2xl border border-neutral-200 overflow-hidden">
+              <div className="p-4 border-b border-neutral-200 flex items-center justify-between">
+                <h4 className="text-sm font-semibold text-neutral-900">Vẽ chữ ký</h4>
+                <button type="button" className="text-neutral-500 hover:text-neutral-800" onClick={closeDrawModal}>
+                  ✕
+                </button>
+              </div>
+
+              <div className="p-4">
+                <div className="rounded-lg border border-neutral-300 bg-neutral-50 p-2 overflow-auto">
+                  <canvas
+                    ref={canvasRef}
+                    onMouseDown={onStartDraw}
+                    onMouseMove={onMoveDraw}
+                    onMouseUp={onEndDraw}
+                    onMouseLeave={onEndDraw}
+                    onTouchStart={onStartDraw}
+                    onTouchMove={onMoveDraw}
+                    onTouchEnd={onEndDraw}
+                    className="bg-white rounded-md shadow-inner cursor-crosshair select-none touch-none"
+                  />
+                </div>
+
+                <div className="mt-3 flex items-center justify-between">
+                  <div className="text-xs text-neutral-500">
+                    Dùng chuột hoặc tay (mobile) để ký. Nên ký trong khung trắng.
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button type="button" onClick={onClearCanvas} className="px-3 py-2 rounded-lg border border-neutral-300 text-neutral-700 hover:bg-neutral-50 text-sm">
+                      Xoá khung
+                    </button>
+                    <button
+                      type="button"
+                      disabled={sigLoading}
+                      onClick={onSaveDrawing}
+                      className={`px-4 py-2 rounded-lg text-white font-semibold ${sigLoading ? "bg-indigo-400" : "bg-indigo-600 hover:bg-indigo-700"} text-sm`}
+                    >
+                      {sigLoading ? "Đang lưu..." : "Lưu chữ ký"}
+                    </button>
+                  </div>
+                </div>
+
+                {sigMsg.text && (
+                  <div className={`mt-3 text-sm rounded px-3 py-2 border ${sigMsg.type === "error" ? "bg-red-50 text-red-700 border-red-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>
+                    {sigMsg.text}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

@@ -1,7 +1,7 @@
 const { DataTypes } = require("sequelize");
-const sequelize = require("../../config/database"); // Sửa thành sequelize
-const Roles = require("../Roles/modelRoles"); // Không thay đổi
-const Departments = require("../Departments/departments"); // Không thay đổi
+const sequelize = require("../../config/database");
+const Roles = require("../Roles/modelRoles");
+const Departments = require("../Departments/departments");
 
 const User = sequelize.define(
   "User",
@@ -26,6 +26,13 @@ const User = sequelize.define(
       type: DataTypes.STRING,
       allowNull: false,
     },
+
+    // ✅ Giữ lại chữ ký ảnh
+    signature_image: {
+      type: DataTypes.STRING, // ví dụ: /static/signatures/123.png
+      allowNull: true,
+    },
+
     id_departments: {
       type: DataTypes.INTEGER,
       allowNull: true,
@@ -49,7 +56,7 @@ const User = sequelize.define(
   }
 );
 
-User.belongsTo(Roles, { foreignKey: "id_roles"});
+User.belongsTo(Roles, { foreignKey: "id_roles" });
 User.belongsTo(Departments, { foreignKey: "id_departments" });
 
 module.exports = User;

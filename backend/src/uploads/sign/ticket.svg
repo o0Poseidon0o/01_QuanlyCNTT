@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Green Checkmark in Circle</title>
+  <desc>Clean, high-quality checkmark icon with rounded strokes and transparent background.</desc>
+  <g>
+    <circle cx="512" cy="512" r="448" stroke="#22C55E" stroke-width="48" fill="none"/>
+    <path d="M300 540 L460 700 L740 380" stroke="#22C55E" stroke-width="72" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </g>
+</svg>
