@@ -103,10 +103,11 @@ const ProfileUsers = () => {
   const drawingRef = useRef(false);
   const lastRef = useRef({ x: 0, y: 0 });
 
-  // Render ảnh chữ ký luôn qua BE (khỏi lo path ../../uploads)
+  // ✅ Luôn load ảnh chữ ký qua API; backend tự fallback ticket.png
   const signatureUrl = useMemo(() => {
     if (!user?.id_users) return "";
-    return `${API_BASE}/signatures/file/${user.id_users}?v=${(user?.updated_at && new Date(user.updated_at).getTime()) || 0}-${sigVer}`;
+    const bust = `${(user?.updated_at && new Date(user.updated_at).getTime()) || 0}-${sigVer}`;
+    return `${API_BASE}/signatures/file/${user.id_users}?v=${bust}`;
   }, [user, sigVer]);
 
   const inputFileRef = useRef(null);
@@ -134,9 +135,9 @@ const ProfileUsers = () => {
       const fd = new FormData();
       fd.append("file", file);
 
-      // Quan trọng: xoá Content-Type mặc định (application/json) nếu interceptor có set
+      // Để browser tự set multipart boundary
       const res = await axios.post(`${API_BASE}/signatures/upload/${userId}`, fd, {
-        headers: { /* để trống cho browser tự đặt multipart boundary */ },
+        headers: {},
         transformRequest: [(data, headers) => {
           if (headers && headers["Content-Type"]) delete headers["Content-Type"];
           return data;
@@ -790,8 +791,9 @@ const ProfileUsers = () => {
                           className="max-h-16 object-contain"
                           loading="lazy"
                           onError={(e) => {
-                            // ép reload lại từ BE (trả ticket.png nếu chưa có)
-                            e.currentTarget.src = `${API_BASE}/signatures/file/${user.id_users}?v=${Date.now()}`;
+                            // Nếu API cũng lỗi (kể cả fallback), ẩn ảnh
+                            e.currentTarget.style.display = "none";
+                            console.error("[Signature IMG] cannot load /signatures/file/:id_users");
                           }}
                         />
                       </div>
