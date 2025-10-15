@@ -840,7 +840,7 @@ const addPart = async (req, res) => {
   }
 };
 
-/** POST /api/repairs/:id/files (multer upload) */
+/** POST /api/repairs/:id/files (multer upload) — chuyển sang filesController nhưng giữ lại cho tương thích */
 const uploadFiles = async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -913,6 +913,251 @@ const getSummaryStatsSafe = async (req, res) => {
   }
 };
 
+/* ====== BỔ SUNG API QUAN TRỌNG ====== */
+
+/** PATCH /api/repairs/:id/approve  — set status = Đã duyệt, lưu history */
+const approveRequest = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const id = Number(req.params.id);
+    const { approver_user } = req.body || {};
+    if (!Number.isInteger(id) || id <= 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "Invalid id_repair" });
+    }
+
+    const r = await RepairRequest.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!r) {
+      await t.rollback();
+      return res.status(404).json({ message: "Not found" });
+    }
+
+    const newStatus = ensureEnum("approved", STATUS_MAP, r.status);
+    const approverId = toInt(approver_user) ?? r.approved_by ?? r.reported_by;
+
+    r.status = newStatus;
+    r.approved_by = approverId || r.approved_by;
+    r.last_updated = new Date();
+    await r.save({ transaction: t });
+
+    await RepairHistory.create(
+      {
+        id_repair: id,
+        actor_user: approverId || r.approved_by || r.reported_by,
+        old_status: r.status, // careful: r.status đã đổi; lưu old_status hợp lý:
+        new_status: newStatus,
+        note: "Approved ticket",
+        created_at: new Date(),
+      },
+      { transaction: t }
+    );
+
+    await t.commit();
+    return res.json({ ok: true });
+  } catch (e) {
+    await t.rollback();
+    console.error("approveRequest error:", e);
+    return res.status(500).json({ message: "Server error", error: e?.message });
+  }
+};
+
+/** PATCH /api/repairs/:id/assign-tech  — gán kỹ thuật viên (internal) & chuyển trạng thái Đang xử lý */
+const assignTechnician = async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { technician_user, start_time = new Date() } = req.body || {};
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid id_repair" });
+    }
+
+    const techId = toInt(technician_user);
+    const tech = techId ? await User.findByPk(techId) : null;
+    if (!tech) return res.status(400).json({ message: "Invalid technician_user" });
+
+    const repairType = resolveRepairTypeEnumValue("internal");
+    const [detail] = await RepairDetail.upsert({
+      id_repair: id,
+      repair_type: repairType,
+      technician_user: techId,
+      id_vendor: null,
+      start_time,
+    });
+
+    // update status -> in_progress
+    await updateStatus(
+      { params: { id }, body: { new_status: "in_progress", note: "Assign technician" } },
+      { json: () => {}, status: () => ({ json: () => {} }) }
+    );
+
+    return res.json({ ok: true, id_repair_detail: detail.id_repair_detail });
+  } catch (e) {
+    console.error("assignTechnician error:", e);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+/** PATCH /api/repairs/:id/assign-vendor  — gán vendor (external) & chuyển trạng thái Chờ linh kiện hoặc Đang xử lý */
+const assignVendor = async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { id_vendor, start_time = new Date(), move_status = "pending_parts" } = req.body || {};
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid id_repair" });
+    }
+
+    const vId = toInt(id_vendor);
+    const vendor = vId ? await RepairVendor.findByPk(vId) : null;
+    if (!vendor) return res.status(400).json({ message: "Invalid id_vendor" });
+
+    const repairType = resolveRepairTypeEnumValue("vendor", { id_vendor: vId });
+    const [detail] = await RepairDetail.upsert({
+      id_repair: id,
+      repair_type: repairType,
+      technician_user: null,
+      id_vendor: vId,
+      start_time,
+    });
+
+    await updateStatus(
+      { params: { id }, body: { new_status: move_status, note: "Assign vendor" } },
+      { json: () => {}, status: () => ({ json: () => {} }) }
+    );
+
+    return res.json({ ok: true, id_repair_detail: detail.id_repair_detail });
+  } catch (e) {
+    console.error("assignVendor error:", e);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+/** PATCH /api/repairs/:id/cancel  — chuyển trạng thái Huỷ */
+const cancelRequest = async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { note } = req.body || {};
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid id_repair" });
+    }
+    await updateStatus(
+      { params: { id }, body: { new_status: "canceled", note: note || "Canceled" } },
+      { json: () => {}, status: () => ({ json: () => {} }) }
+    );
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("cancelRequest error:", e);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+/** DELETE /api/repairs/:id  — xoá ticket (cascade) */
+const removeRequest = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "Invalid id_repair" });
+    }
+    const r = await RepairRequest.findByPk(id, { transaction: t });
+    if (!r) {
+      await t.rollback();
+      return res.status(404).json({ message: "Not found" });
+    }
+
+    // Xoá các bản ghi phụ (an toàn – nếu đã cascade ở DB thì vẫn ok)
+    await RepairFiles.destroy({ where: { id_repair: id }, transaction: t });
+    await RepairPartUsed.destroy({ where: { id_repair: id }, transaction: t });
+    await RepairHistory.destroy({ where: { id_repair: id }, transaction: t });
+    await RepairDetail.destroy({ where: { id_repair: id }, transaction: t });
+
+    await r.destroy({ transaction: t });
+    await t.commit();
+
+    return res.json({ ok: true });
+  } catch (e) {
+    await t.rollback();
+    console.error("removeRequest error:", e);
+    return res.status(500).json({ message: "Server error", error: e?.message });
+  }
+};
+
+/**
+ * POST /api/repairs/:id/confirm
+ * Người dùng xác nhận hoàn thành: set status = "Hoàn tất", lưu history,
+ * nếu User có signature_image (path) thì tự tạo 1 record RepairFiles trỏ tới ảnh chữ ký (không cần upload lại).
+ * body: { user_id, note? }
+ */
+const confirmComplete = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const id = Number(req.params.id);
+    const { user_id, note } = req.body || {};
+    if (!Number.isInteger(id) || id <= 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "Invalid id_repair" });
+    }
+    const uid = toInt(user_id);
+    if (!uid) {
+      await t.rollback();
+      return res.status(400).json({ message: "Invalid user_id" });
+    }
+
+    const r = await RepairRequest.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!r) {
+      await t.rollback();
+      return res.status(404).json({ message: "Not found" });
+    }
+
+    const u = await User.findByPk(uid, { transaction: t });
+    if (!u) {
+      await t.rollback();
+      return res.status(400).json({ message: "User not found" });
+    }
+
+    // Chuyển trạng thái -> completed
+    const old_status = r.status;
+    const newStatus = ensureEnum("completed", STATUS_MAP, r.status);
+    r.status = newStatus;
+    r.last_updated = new Date();
+    await r.save({ transaction: t });
+
+    // Lịch sử
+    await RepairHistory.create(
+      {
+        id_repair: id,
+        actor_user: uid,
+        old_status,
+        new_status: newStatus,
+        note: note || "User confirmed completion",
+        created_at: new Date(),
+      },
+      { transaction: t }
+    );
+
+    // Nếu có chữ ký ảnh đã lưu trong User.signature_image thì gắn vào Files (tham chiếu path)
+    if (u.signature_image) {
+      await RepairFiles.create(
+        {
+          id_repair: id,
+          file_path: String(u.signature_image),
+          file_name: "signature.png", // hoặc lấy basename từ path nếu muốn
+          mime_type: "image/png",
+          uploaded_by: uid,
+          uploaded_at: new Date(),
+        },
+        { transaction: t }
+      );
+    }
+
+    await t.commit();
+    return res.json({ ok: true });
+  } catch (e) {
+    await t.rollback();
+    console.error("confirmComplete error:", e);
+    return res.status(500).json({ message: "Server error", error: e?.message });
+  }
+};
+
 module.exports = {
   // cũ
   listRepairs,
@@ -929,4 +1174,12 @@ module.exports = {
   listAllRepairs,
   searchRepairs,
   listRepairsByUser,
+
+  // bổ sung
+  approveRequest,
+  assignTechnician,
+  assignVendor,
+  cancelRequest,
+  removeRequest,
+  confirmComplete,
 };

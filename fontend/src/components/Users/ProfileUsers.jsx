@@ -1,7 +1,11 @@
 // src/components/Users/ProfileUsers.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "../../lib/httpClient";
-import { createRepair } from "../../services/repairsApi";
+import {
+  createRepair,
+  listRepairs,
+  confirmComplete,
+} from "../../services/repairsApi";
 
 const API_BASE =
   process.env.NODE_ENV === "production" ? "/api" : "http://localhost:5000/api";
@@ -31,20 +35,23 @@ const ProfileUsers = () => {
   const [ticketPage, setTicketPage] = useState(1);
   const [ticketPageSize, setTicketPageSize] = useState(PAGE_SIZE_DEFAULT);
 
+  // Tabs khớp repairsApi.js (requested, approved, in_progress, pending_parts, completed, canceled)
   const STATUS_TABS = useMemo(
     () => [
       { key: "all", label: "Tất cả" },
-      { key: "requested", label: "Requested" },
-      { key: "open", label: "Open" },
-      { key: "in_progress", label: "In progress" },
-      { key: "pending", label: "Pending" },
-      { key: "completed", label: "Completed" },
-      { key: "resolved", label: "Resolved" },
-      { key: "closed", label: "Closed" },
+      { key: "requested", label: "Được yêu cầu" },
+      { key: "approved", label: "Đã duyệt" },
+      { key: "in_progress", label: "Đang xử lý" },
+      { key: "pending_parts", label: "Chờ linh kiện" },
+      { key: "completed", label: "Hoàn tất" },
+      { key: "canceled", label: "Huỷ" },
     ],
     []
   );
   const [ticketTab, setTicketTab] = useState("all");
+
+  // Xác nhận hoàn thành
+  const [confirmingId, setConfirmingId] = useState(null);
 
   // Đổi mật khẩu
   const [showPwdModal, setShowPwdModal] = useState(false);
@@ -103,10 +110,15 @@ const ProfileUsers = () => {
   const drawingRef = useRef(false);
   const lastRef = useRef({ x: 0, y: 0 });
 
+  // Dùng để thử reload 1 lần khi ảnh chữ ký lỗi trước khi fallback ticket.png
+  const sigImgTriedRef = useRef(false);
+
   // ✅ Luôn load ảnh chữ ký qua API; backend tự fallback ảnh mặc định
   const signatureUrl = useMemo(() => {
     if (!user?.id_users) return "";
-    const bust = `${(user?.updated_at && new Date(user.updated_at).getTime()) || 0}-${sigVer}`;
+    const bust = `${
+      (user?.updated_at && new Date(user.updated_at).getTime()) || 0
+    }-${sigVer}`;
     return `${API_BASE}/signatures/file/${user.id_users}?v=${bust}`;
   }, [user, sigVer]);
 
@@ -136,13 +148,19 @@ const ProfileUsers = () => {
       fd.append("file", file);
 
       // Để browser tự set multipart boundary
-      const res = await axios.post(`${API_BASE}/signatures/upload/${userId}`, fd, {
-        headers: {},
-        transformRequest: [(data, headers) => {
-          if (headers && headers["Content-Type"]) delete headers["Content-Type"];
-          return data;
-        }],
-      });
+      const res = await axios.post(
+        `${API_BASE}/signatures/upload/${userId}`,
+        fd,
+        {
+          headers: {},
+          transformRequest: [
+            (data, headers) => {
+              if (headers && headers["Content-Type"]) delete headers["Content-Type"];
+              return data;
+            },
+          ],
+        }
+      );
 
       const stored = res?.data?.signature_image;
       if (stored) {
@@ -151,6 +169,7 @@ const ProfileUsers = () => {
           signature_image: stored,
           updated_at: new Date().toISOString(),
         }));
+        sigImgTriedRef.current = false; // reset thử lại khi có ảnh mới
         setSigVer((v) => v + 1); // ép reload ảnh
         setSigMsg({ type: "success", text: "Tải chữ ký thành công." });
       } else {
@@ -181,6 +200,7 @@ const ProfileUsers = () => {
         signature_image: "",
         updated_at: new Date().toISOString(),
       }));
+      sigImgTriedRef.current = false;
       setSigVer((v) => v + 1);
       setSigMsg({ type: "success", text: "Đã xoá chữ ký." });
     } catch (err) {
@@ -257,8 +277,11 @@ const ProfileUsers = () => {
     const canvas = canvasRef.current;
     const ctx = ctxRef.current;
     if (!canvas || !ctx) return;
+    // Xoá theo kích thước logic (đã scale dpr)
+    const cssW = parseInt(canvas.style.width || "480", 10);
+    const cssH = parseInt(canvas.style.height || "180", 10);
     ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, cssW, cssH);
     ctx.fillStyle = "#ffffff";
     ctx.strokeStyle = "#111827";
   };
@@ -277,9 +300,11 @@ const ProfileUsers = () => {
 
       let res;
       try {
-        res = await axios.post(`${API_BASE}/signatures/draw/${userId}`, { dataUrl }, {
-          headers: { "Content-Type": "application/json" },
-        });
+        res = await axios.post(
+          `${API_BASE}/signatures/draw/${userId}`,
+          { dataUrl },
+          { headers: { "Content-Type": "application/json" } }
+        );
       } catch (err) {
         if (err?.response?.status === 400) {
           res = await axios.post(`${API_BASE}/signatures/draw/${userId}`, dataUrl, {
@@ -297,6 +322,7 @@ const ProfileUsers = () => {
           signature_image: stored,
           updated_at: new Date().toISOString(),
         }));
+        sigImgTriedRef.current = false;
         setSigVer((v) => v + 1);
         setSigMsg({ type: "success", text: "Đã lưu chữ ký vẽ tay." });
         setShowDrawModal(false);
@@ -359,43 +385,53 @@ const ProfileUsers = () => {
     );
   }, [user, roleMap]);
 
-  const VI_SEVERITY = { critical: "Khẩn", high: "Cao", medium: "Trung Bình", low: "Thấp" };
-  const VI_PRIORITY = { urgent: "Khẩn", high: "Cao", normal: "Bình Thường", low: "Thấp" };
+  const VI_SEVERITY = {
+    critical: "Khẩn",
+    high: "Cao",
+    medium: "Trung Bình",
+    low: "Thấp",
+  };
+  const VI_PRIORITY = {
+    urgent: "Khẩn",
+    high: "Cao",
+    normal: "Bình Thường",
+    low: "Thấp",
+  };
 
-  const statusPill = (st) => {
+  const statusPill = (st, label) => {
     const v = String(st || "").toLowerCase();
     const map = {
       requested: "text-neutral-700 bg-neutral-100 border-neutral-200",
-      open: "text-indigo-700 bg-indigo-50 border-indigo-200",
+      approved: "text-indigo-700 bg-indigo-50 border-indigo-200",
       in_progress: "text-blue-700 bg-blue-50 border-blue-200",
-      pending: "text-amber-700 bg-amber-50 border-amber-200",
+      pending_parts: "text-amber-700 bg-amber-50 border-amber-200",
       completed: "text-emerald-700 bg-emerald-50 border-emerald-200",
-      resolved: "text-emerald-700 bg-emerald-50 border-emerald-200",
-      closed: "text-neutral-700 bg-neutral-50 border-neutral-200",
       canceled: "text-red-700 bg-red-50 border-red-200",
-      rejected: "text-rose-700 bg-rose-50 border-rose-200",
     };
     const cls = map[v] || "text-neutral-700 bg-neutral-50 border-neutral-200";
-    const label = st || "—";
+    const show = label || st || "—";
     return (
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full border text-xs font-semibold ${cls}`}>
-        {label}
+        {show}
       </span>
     );
   };
 
+  const pad2 = (n) => String(n).padStart(2, "0");
   const formatTimeShort = (iso) => {
     if (!iso) return "—";
     const d = new Date(iso);
     if (isNaN(d)) return String(iso);
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(
+      d.getSeconds()
+    )} ${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
   };
 
   const formatVND = (n) => `${(Number(n) || 0).toLocaleString("vi-VN")} đ`;
 
   // Fetch user
   useEffect(() => {
+    let mounted = true;
     const fetchUser = async (id) => {
       if (!id) return;
       setLoading(true);
@@ -411,6 +447,8 @@ const ProfileUsers = () => {
         else if (Array.isArray(res.data?.users)) data = res.data.users[0] || null;
         else data = res.data || null;
 
+        if (!mounted) return;
+
         if (!data) {
           setError("Không tìm thấy người dùng.");
           setUser(null);
@@ -418,31 +456,41 @@ const ProfileUsers = () => {
           setUser(data);
         }
       } catch (e) {
+        if (!mounted) return;
         setError(e?.response?.data?.message || "Lỗi khi tải thông tin người dùng");
         setUser(null);
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     };
 
     if (userId) fetchUser(userId);
+    return () => {
+      mounted = false;
+    };
   }, [userId]);
 
   // Fetch departments
   useEffect(() => {
+    let mounted = true;
     const fetchDepartments = async () => {
       try {
         const res = await axios.get(`${API_BASE}/departments/all-departments`);
+        if (!mounted) return;
         setDepartments(Array.isArray(res.data) ? res.data : res.data?.departments || []);
       } catch {
-        setDepartments([]);
+        if (mounted) setDepartments([]);
       }
     };
     fetchDepartments();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   // Fetch roles
   useEffect(() => {
+    let mounted = true;
     const fetchRoles = async () => {
       const tryEndpoints = [
         `${API_BASE}/roles/all-roles`,
@@ -455,18 +503,22 @@ const ProfileUsers = () => {
           const r = await axios.get(url);
           const list = Array.isArray(r.data) ? r.data : r.data?.roles || [];
           if (list.length) {
-            setRoles(list);
+            if (mounted) setRoles(list);
             return;
           }
         } catch {}
       }
-      setRoles([]);
+      if (mounted) setRoles([]);
     };
     fetchRoles();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   // Fetch devices
   useEffect(() => {
+    let mounted = true;
     const fetchDevices = async () => {
       if (!userId) return;
 
@@ -490,21 +542,31 @@ const ProfileUsers = () => {
       }
 
       try {
-        const rAssign = await axios.get(
-          `${API_BASE}/assignments/active-by-user/${userId}`,
-          { headers: { "Cache-Control": "no-cache" }, params: { t: Date.now() } }
-        );
+        const rAssign = await axios.get(`${API_BASE}/assignments/active-by-user/${userId}`, {
+          headers: { "Cache-Control": "no-cache" },
+          params: { t: Date.now() },
+        });
         const assigns = Array.isArray(rAssign.data) ? rAssign.data : [];
 
         const assignDevices = assigns
           .map((r) => ({
             id_devices:
-              r.id_devices ?? r.Device?.id_devices ?? r.device?.id_devices ?? r.device_id,
+              r.id_devices ??
+              r.Device?.id_devices ??
+              r.device?.id_devices ??
+              r.device_id,
             name_devices:
-              r.Device?.name_devices ?? r.device?.name_devices ?? r.name_devices ?? "",
+              r.Device?.name_devices ??
+              r.device?.name_devices ??
+              r.name_devices ??
+              "",
             start_time: r.start_time || null,
             note:
-              r.Device?.DeviceNote ?? r.Device?.note ?? r.device?.note ?? r.note ?? null,
+              r.Device?.DeviceNote ??
+              r.Device?.note ??
+              r.device?.note ??
+              r.note ??
+              null,
           }))
           .filter((d) => d.id_devices);
 
@@ -520,70 +582,84 @@ const ProfileUsers = () => {
           }
         });
 
-        setDevices(Array.from(map.values()));
+        if (mounted) setDevices(Array.from(map.values()));
       } catch {
-        setDevices(baseDevices);
+        if (mounted) setDevices(baseDevices);
       }
     };
 
     fetchDevices();
+    return () => {
+      mounted = false;
+    };
   }, [userId]);
 
-  // Fetch my tickets
+  // Fetch my tickets — dùng listRepairs từ repairsApi.js (đã canonical & có *_label)
   const fetchMyTickets = async () => {
     if (!userId) return;
     setTicketsLoading(true);
     setTicketsError("");
     try {
-      let data = [];
+      // Trả về có thể: mảng tickets hoặc {repairs:[], total,...}
+      const res = await listRepairs({ reported_by: userId, _ts: Date.now() });
+      const rawList = Array.isArray(res) ? res : res?.repairs || [];
 
-      try {
-        const r1 = await axios.get(`${API_BASE}/repairs/search`, { params: { reported_by: userId } });
-        if (Array.isArray(r1.data)) data = r1.data;
-        else if (Array.isArray(r1.data?.repairs)) data = r1.data.repairs;
-      } catch {}
-
-      if (!data.length) {
-        try {
-          const r2 = await axios.get(`${API_BASE}/repairs/user/${userId}`);
-          if (Array.isArray(r2.data)) data = r2.data;
-          else if (Array.isArray(r2.data?.repairs)) data = r2.data.repairs;
-        } catch {}
-      }
-
-      if (!data.length) {
-        try {
-          const r3 = await axios.get(`${API_BASE}/repairs/all`);
-          const all = Array.isArray(r3.data) ? r3.data : r3.data?.repairs || [];
-          data = all.filter((t) => String(t.reported_by) === String(userId));
-        } catch {}
-      }
-
-      const normalized = (data || []).map((t) => ({
+      // Chuẩn hoá field tối thiểu ta dùng
+      const normalized = (rawList || []).map((t) => ({
         id_repair: t.id_repair ?? t.id ?? t.ticket_id,
-        device_code: t.device_code ?? t.id_devices ?? t.Device?.id_devices ?? t.device?.id_devices ?? "",
-        device_name: t.device_name ?? t.Device?.name_devices ?? t.device?.name_devices ?? "",
+        device_code:
+          t.device_code ??
+          t.id_devices ??
+          t.Device?.id_devices ??
+          t.device?.id_devices ??
+          "",
+        device_name:
+          t.device_name ?? t.Device?.name_devices ?? t.device?.name_devices ?? "",
         title: t.title ?? t.issue_title ?? "—",
         issue_description: t.issue_description ?? t.description ?? "",
         result: t.outcome ?? t.result ?? t.repair_result ?? "-",
-        severity: (t.severity || t.level || "").toString().toLowerCase(),
+        // status/severity/priority đã canonical trong repairsApi.mapTicketFromApi
+        status: t.status,
+        status_label: t.status_label || t.status,
+        severity: (t.severity || "").toString().toLowerCase(),
+        severity_label: t.severity_label || t.severity,
         priority: (t.priority || "").toString().toLowerCase(),
-        status: t.status ?? t.state ?? t.current_status ?? "requested",
-        created_at: t.date_reported ?? t.created_at ?? t.createdAt ?? t.created_time,
+        priority_label: t.priority_label || t.priority,
+        created_at:
+          t.date_reported ?? t.created_at ?? t.createdAt ?? t.created_time,
         sla_hours: t.sla_hours ?? t.sla ?? null,
-        reporter_name: t.reporter_name ?? t.Reporter?.username ?? t.created_by_name ?? "",
-        assignee_name: t.assignee ?? t.assignee_name ?? t.technician_name ?? t.Technician?.username ?? "",
+        reporter_name:
+          t.reporter_name ??
+          t.Reporter?.username ??
+          t.created_by_name ??
+          t.reported_by ??
+          "",
+        assignee_name:
+          t.assignee ??
+          t.assignee_name ??
+          t.technician_name ??
+          t.Technician?.username ??
+          "",
         vendor_name: t.vendor_name ?? t.RepairVendor?.vendor_name ?? "",
         repair_type: t.repair_type ?? "",
         total_cost:
           t.total_cost ??
-          (Number(t.labor_cost || 0) + Number(t.parts_cost || 0) + Number(t.other_cost || 0)),
+          Number(t.labor_cost || 0) +
+            Number(t.parts_cost || 0) +
+            Number(t.other_cost || 0),
+        user_confirmed: t.user_confirmed ?? t.is_user_confirmed ?? null,
       }));
 
-      normalized.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+      normalized.sort(
+        (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)
+      );
       setMyTickets(normalized);
+      setTicketPage(1); // reset về trang 1 mỗi lần reload
     } catch (e) {
-      setTicketsError(e?.response?.data?.message || "Không tải được danh sách ticket của bạn.");
+      setTicketsError(
+        e?.response?.data?.message ||
+          "Không tải được danh sách ticket của bạn."
+      );
       setMyTickets([]);
     } finally {
       setTicketsLoading(false);
@@ -666,7 +742,9 @@ const ProfileUsers = () => {
   // Lọc + phân trang
   const filteredByTab = useMemo(() => {
     if (ticketTab === "all") return myTickets;
-    return myTickets.filter((t) => String(t.status || "").toLowerCase() === ticketTab);
+    return myTickets.filter(
+      (t) => String(t.status || "").toLowerCase() === ticketTab
+    );
   }, [myTickets, ticketTab]);
 
   const filteredTickets = useMemo(() => {
@@ -678,8 +756,11 @@ const ProfileUsers = () => {
         t.title,
         t.result,
         t.severity,
+        t.severity_label,
         t.priority,
+        t.priority_label,
         t.status,
+        t.status_label,
         t.device_code,
         t.device_name,
         t.reporter_name,
@@ -692,18 +773,76 @@ const ProfileUsers = () => {
     });
   }, [filteredByTab, ticketQuery]);
 
-  const totalTicketPages = Math.max(1, Math.ceil(filteredTickets.length / ticketPageSize));
+  const totalTicketPages = Math.max(
+    1,
+    Math.ceil(filteredTickets.length / ticketPageSize)
+  );
+
+  // Bảo vệ khi thay đổi filter/page size làm số trang < trang hiện tại
+  useEffect(() => {
+    setTicketPage((p) => Math.min(p, totalTicketPages));
+  }, [totalTicketPages]);
+
   const pageTickets = useMemo(() => {
     const start = (ticketPage - 1) * ticketPageSize;
     return filteredTickets.slice(start, start + ticketPageSize);
   }, [filteredTickets, ticketPage, ticketPageSize]);
 
+  // ----------- CHỐT: chắn xác nhận lặp lại cực nhanh -----------
+  const confirmedOnceRef = useRef(new Set());
+
+  // Xử lý xác nhận hoàn thành (chống spam + optimistic update + ẩn nút)
+  const handleUserConfirm = async (ticketId) => {
+    if (!userId) return;
+
+    // chặn double click khi đang pending hoặc đã click 1 lần cực nhanh
+    if (confirmingId === ticketId || confirmedOnceRef.current.has(ticketId)) return;
+
+    // nếu đã confirm rồi thì thôi; và chỉ cho phép khi status === completed
+    const target = myTickets.find((t) => t.id_repair === ticketId);
+    if (!target) return;
+    const isCompleted = String(target.status || "").toLowerCase() === "completed";
+    if (!isCompleted || target.user_confirmed) return;
+
+    // đánh dấu đã xử lý 1 lần
+    confirmedOnceRef.current.add(ticketId);
+    setConfirmingId(ticketId);
+
+    // ✅ Optimistic: ẩn nút ngay lập tức
+    setMyTickets((prev) =>
+      prev.map((t) =>
+        t.id_repair === ticketId ? { ...t, user_confirmed: true } : t
+      )
+    );
+
+    try {
+      await confirmComplete(ticketId, Number(userId));
+      // Đồng bộ lại dữ liệu thực tế từ BE (tuỳ thích)
+      await fetchMyTickets();
+    } catch (e) {
+      // ❌ Rollback nếu lỗi và cho phép bấm lại
+      setMyTickets((prev) =>
+        prev.map((t) =>
+          t.id_repair === ticketId ? { ...t, user_confirmed: false } : t
+        )
+      );
+      confirmedOnceRef.current.delete(ticketId);
+      alert(e?.response?.data?.message || "Không xác nhận được.");
+    } finally {
+      setConfirmingId(null);
+    }
+  };
+
   if (!userId) {
     return (
       <div className="min-h-screen bg-neutral-100 flex items-center justify-center p-6">
         <div className="bg-white border border-neutral-200 rounded-xl w-full max-w-xl p-6 text-center">
-          <h1 className="text-xl font-semibold text-neutral-900 mb-2">Hồ sơ người dùng</h1>
-          <p className="text-neutral-600">Vui lòng đăng nhập để xem hồ sơ.</p>
+          <h1 className="text-xl font-semibold text-neutral-900 mb-2">
+            Hồ sơ người dùng
+          </h1>
+          <p className="text-neutral-600">
+            Vui lòng đăng nhập để xem hồ sơ.
+          </p>
         </div>
       </div>
     );
@@ -746,7 +885,9 @@ const ProfileUsers = () => {
                     <img
                       src={
                         user?.id_users
-                          ? `${API_BASE}/avatars/${user.id_users}?t=${user?.updated_at || ""}`
+                          ? `${API_BASE}/avatars/${user.id_users}?t=${
+                              user?.updated_at || ""
+                            }`
                           : DEFAULT_AVT
                       }
                       alt="Avatar"
@@ -786,14 +927,19 @@ const ProfileUsers = () => {
                       <div className="rounded-lg bg-white border border-neutral-200 p-2 flex items-center justify-center">
                         <img
                           key={signatureUrl}
-                          src={signatureUrl}
+                          src={signatureUrl || `${API_BASE}/signatures/file/0`}
                           alt="Signature"
                           className="max-h-16 object-contain"
                           loading="lazy"
                           onError={(e) => {
-                            // Nếu API cũng lỗi (kể cả fallback), ẩn ảnh
-                            e.currentTarget.style.display = "none";
-                            console.error("[Signature IMG] cannot load /signatures/file/:id_users");
+                            // Thử 1 lần cache-bust; nếu vẫn lỗi → ticket.png
+                            if (!sigImgTriedRef.current && user?.id_users) {
+                              sigImgTriedRef.current = true;
+                              e.currentTarget.src = `${API_BASE}/signatures/file/${user.id_users}?v=retry-${Date.now()}`;
+                              return;
+                            }
+                            // Fallback cuối
+                            e.currentTarget.src = `${API_BASE}/signatures/file/0?v=ticket-${Date.now()}`;
                           }}
                         />
                       </div>
@@ -868,19 +1014,26 @@ const ProfileUsers = () => {
           {/* Thông tin chi tiết */}
           <div className="bg-white border border-neutral-200 rounded-xl">
             <div className="p-4 border-b border-neutral-200">
-              <h3 className="text-sm font-semibold text-neutral-900">Thông tin chi tiết</h3>
+              <h3 className="text-sm font-semibold text-neutral-900">
+                Thông tin chi tiết
+              </h3>
             </div>
             {loading ? (
               <div className="p-4 animate-pulse space-y-3">
                 {[...Array(4)].map((_, i) => (
-                  <div key={i} className="grid grid-cols-12 gap-3 items-center">
+                  <div
+                    key={i}
+                    className="grid grid-cols-12 gap-3 items-center"
+                  >
                     <div className="col-span-4 h-3 bg-neutral-200 rounded" />
                     <div className="col-span-8 h-3 bg-neutral-200 rounded" />
                   </div>
                 ))}
               </div>
             ) : error ? (
-              <div className="p-4 text-sm text-red-700 bg-red-50 border-t border-red-200">{error}</div>
+              <div className="p-4 text-sm text-red-700 bg-red-50 border-t border-red-200">
+                {error}
+              </div>
             ) : user ? (
               <div className="divide-y divide-neutral-200">
                 <Row label="Email" value={user.email_user || "—"} />
@@ -891,7 +1044,9 @@ const ProfileUsers = () => {
                   label="Chữ ký"
                   value={
                     <span className="inline-flex items-center gap-1 text-emerald-700">
-                      <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white text-[10px]">✔</span>
+                      <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white text-[10px]">
+                        ✔
+                      </span>
                       {user?.signature_image ? "Đã thiết lập" : "Chưa có"}
                     </span>
                   }
@@ -903,7 +1058,9 @@ const ProfileUsers = () => {
           {/* Thiết bị */}
           <div className="bg-white border border-neutral-200 rounded-xl">
             <div className="p-4 border-b border-neutral-200 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-neutral-900">Thiết bị đang sử dụng</h3>
+              <h3 className="text-sm font-semibold text-neutral-900">
+                Thiết bị đang sử dụng
+              </h3>
               <div className="text-xs text-neutral-500">{devices.length} mục</div>
             </div>
             <div className="p-0">
@@ -922,7 +1079,9 @@ const ProfileUsers = () => {
                       <tbody className="divide-y divide-neutral-200">
                         {devices.map((d) => (
                           <tr key={d.id_devices} className="hover:bg-neutral-50">
-                            <Td className="font-medium text-neutral-800">{d.id_devices}</Td>
+                            <Td className="font-medium text-neutral-800">
+                              {d.id_devices}
+                            </Td>
                             <Td>{d.name_devices || "—"}</Td>
                             <Td className="hidden md:table-cell text-neutral-500">
                               {d.DeviceNote || d.note || "—"}
@@ -943,7 +1102,9 @@ const ProfileUsers = () => {
                   </div>
                 </>
               ) : (
-                <div className="p-4 text-sm text-neutral-600">Không có thiết bị.</div>
+                <div className="p-4 text-sm text-neutral-600">
+                  Không có thiết bị.
+                </div>
               )}
             </div>
           </div>
@@ -952,7 +1113,9 @@ const ProfileUsers = () => {
           <div className="bg-white border border-neutral-200 rounded-xl">
             <div className="p-4 border-b border-neutral-200">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <h3 className="text-sm font-semibold text-neutral-900">Danh sách ticket</h3>
+                <h3 className="text-sm font-semibold text-neutral-900">
+                  Danh sách ticket
+                </h3>
 
                 <div className="flex items-center gap-2">
                   <input
@@ -963,6 +1126,7 @@ const ProfileUsers = () => {
                     }}
                     placeholder="Tìm theo tiêu đề / thiết bị / người báo cáo…"
                     className="text-sm px-3 py-2 border rounded-lg border-neutral-300 w-56"
+                    aria-label="Tìm ticket"
                   />
                   <select
                     className="text-sm px-2 py-2 border rounded-lg border-neutral-300"
@@ -971,6 +1135,7 @@ const ProfileUsers = () => {
                       setTicketPageSize(Number(e.target.value));
                       setTicketPage(1);
                     }}
+                    aria-label="Số mục mỗi trang"
                   >
                     {[5, 8, 10, 15, 20].map((n) => (
                       <option key={n} value={n}>
@@ -981,6 +1146,7 @@ const ProfileUsers = () => {
                   <button
                     onClick={refreshMyTickets}
                     className="text-sm px-3 py-2 rounded-lg border border-neutral-300 hover:bg-neutral-50"
+                    title="Làm mới danh sách ticket"
                   >
                     Làm mới
                   </button>
@@ -1042,6 +1208,7 @@ const ProfileUsers = () => {
                         <Th className="hidden md:table-cell">SLA (h)</Th>
                         <Th className="hidden lg:table-cell">Người xử lý / NCC</Th>
                         <Th className="hidden md:table-cell">Chi phí</Th>
+                        <Th className="w-40">Hành động</Th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-200">
@@ -1051,19 +1218,41 @@ const ProfileUsers = () => {
                         const title = t.title || "—";
                         const titleSub = (t.issue_description || "").trim() || null;
 
-                        const sev = VI_SEVERITY[String(t.severity || "").toLowerCase()] || t.severity || "—";
-                        const pri = VI_PRIORITY[String(t.priority || "").toLowerCase()] || t.priority || "—";
+                        const sev =
+                          t.severity_label ||
+                          VI_SEVERITY[String(t.severity || "").toLowerCase()] ||
+                          t.severity ||
+                          "—";
+                        const pri =
+                          t.priority_label ||
+                          VI_PRIORITY[String(t.priority || "").toLowerCase()] ||
+                          t.priority ||
+                          "—";
                         const reporter = t.reporter_name || user?.username || "—";
-                        const handler = t.assignee_name || (t.vendor_name ? t.vendor_name : "-");
-                        const handlerSub = t.vendor_name ? "NCC" : t.assignee_name ? "Nội bộ" : "";
+                        const handler =
+                          t.assignee_name || (t.vendor_name ? t.vendor_name : "-");
+                        const handlerSub = t.vendor_name
+                          ? "NCC"
+                          : t.assignee_name
+                          ? "Nội bộ"
+                          : "";
+
+                        const isCompleted = String(t.status).toLowerCase() === "completed";
 
                         return (
-                          <tr key={t.id_repair} className="hover:bg-neutral-50">
+                          <tr
+                            key={t.id_repair}
+                            className={`hover:bg-neutral-50 ${t.user_confirmed ? "opacity-70" : ""}`}
+                          >
                             <Td className="font-semibold">#{t.id_repair}</Td>
 
                             <Td className="whitespace-nowrap">
-                              <div className="font-medium text-neutral-800">{devTop}</div>
-                              <div className="text-[11px] text-neutral-500">{devSub}</div>
+                              <div className="font-medium text-neutral-800">
+                                {devTop}
+                              </div>
+                              <div className="text-[11px] text-neutral-500">
+                                {devSub}
+                              </div>
                             </Td>
 
                             <Td className="max-w-[720px]">
@@ -1077,22 +1266,86 @@ const ProfileUsers = () => {
                                 </a>
                               </div>
                               {titleSub ? (
-                                <div className="text-[11px] text-neutral-500 truncate">{titleSub}</div>
+                                <div className="text-[11px] text-neutral-500 truncate">
+                                  {titleSub}
+                                </div>
                               ) : null}
                             </Td>
 
-                            <Td className="hidden md:table-cell">{t.result || "-"}</Td>
+                            <Td className="hidden md:table-cell">
+                              {t.result || "-"}
+                            </Td>
                             <Td className="hidden md:table-cell">{sev}</Td>
                             <Td className="hidden md:table-cell">{pri}</Td>
-                            <Td>{statusPill(t.status)}</Td>
-                            <Td className="hidden lg:table-cell">{reporter}</Td>
-                            <Td className="whitespace-nowrap">{formatTimeShort(t.created_at)}</Td>
-                            <Td className="hidden md:table-cell">{t.sla_hours ?? "-"}</Td>
-                            <Td className="hidden lg:table-cell">
-                              <div className="font-medium text-neutral-800">{handler}</div>
-                              <div className="text-[11px] text-neutral-500">{handlerSub}</div>
+
+                            <Td>
+                              {statusPill(
+                                t.status,
+                                isCompleted && t.user_confirmed
+                                  ? "Hoàn tất (đã xác nhận)"
+                                  : t.status_label
+                              )}
                             </Td>
-                            <Td className="hidden md:table-cell">{formatVND(t.total_cost)}</Td>
+
+                            <Td className="hidden lg:table-cell">{reporter}</Td>
+                            <Td className="whitespace-nowrap">
+                              {formatTimeShort(t.created_at)}
+                            </Td>
+                            <Td className="hidden md:table-cell">
+                              {t.sla_hours ?? "-"}
+                            </Td>
+                            <Td className="hidden lg:table-cell">
+                              <div className="font-medium text-neutral-800">
+                                {handler}
+                              </div>
+                              <div className="text-[11px] text-neutral-500">
+                                {handlerSub}
+                              </div>
+                            </Td>
+                            <Td className="hidden md:table-cell">
+                              {formatVND(t.total_cost)}
+                            </Td>
+
+                            {/* Hành động */}
+                            <Td>
+                              {(() => {
+                                const canConfirm =
+                                  isCompleted &&
+                                  !t.user_confirmed &&
+                                  confirmingId !== t.id_repair &&
+                                  !confirmedOnceRef.current.has(t.id_repair);
+
+                                if (canConfirm) {
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUserConfirm(t.id_repair)}
+                                      disabled={confirmingId === t.id_repair}
+                                      className={`text-xs px-3 py-1.5 rounded-lg text-white ${
+                                        confirmingId === t.id_repair
+                                          ? "bg-emerald-400 pointer-events-none"
+                                          : "bg-emerald-600 hover:bg-emerald-700"
+                                      }`}
+                                      title="Xác nhận đã hoàn thành"
+                                    >
+                                      {confirmingId === t.id_repair
+                                        ? "Đang xác nhận..."
+                                        : "Xác nhận đã hoàn thành"}
+                                    </button>
+                                  );
+                                }
+
+                                if (t.user_confirmed) {
+                                  return (
+                                    <span className="text-xs text-emerald-700">
+                                      Đã xác nhận
+                                    </span>
+                                  );
+                                }
+
+                                return <span className="text-xs text-neutral-400">—</span>;
+                              })()}
+                            </Td>
                           </tr>
                         );
                       })}
@@ -1102,7 +1355,9 @@ const ProfileUsers = () => {
 
                 {/* Pagination */}
                 <div className="p-4 flex items-center justify-between text-sm">
-                  <div className="text-neutral-600">Tổng: {filteredTickets.length} ticket</div>
+                  <div className="text-neutral-600">
+                    Tổng: {filteredTickets.length} ticket
+                  </div>
                   <div className="flex items-center gap-2">
                     <button
                       disabled={ticketPage <= 1}
@@ -1116,11 +1371,14 @@ const ProfileUsers = () => {
                       Trước
                     </button>
                     <div>
-                      Trang <span className="font-medium">{ticketPage}</span> / <span>{totalTicketPages}</span>
+                      Trang <span className="font-medium">{ticketPage}</span> /{" "}
+                      <span>{totalTicketPages}</span>
                     </div>
                     <button
                       disabled={ticketPage >= totalTicketPages}
-                      onClick={() => setTicketPage((p) => Math.min(totalTicketPages, p + 1))}
+                      onClick={() =>
+                        setTicketPage((p) => Math.min(totalTicketPages, p + 1))
+                      }
                       className={`px-3 py-1.5 rounded-lg border ${
                         ticketPage >= totalTicketPages
                           ? "text-neutral-400 border-neutral-200"
@@ -1140,19 +1398,29 @@ const ProfileUsers = () => {
       {/* Modal đổi mật khẩu */}
       {showPwdModal && (
         <div className="fixed inset-0 z-50">
-          <div className="absolute inset-0 bg-black/40" onClick={() => !cpLoading && setShowPwdModal(false)} />
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => !cpLoading && setShowPwdModal(false)}
+          />
           <div className="absolute inset-0 flex items-center justify-center p-4">
             <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-neutral-200">
               <div className="p-4 border-b border-neutral-200 flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-neutral-900">Đổi mật khẩu</h4>
-                <button type="button" className="text-neutral-500 hover:text-neutral-800" onClick={() => !cpLoading && setShowPwdModal(false)}>
+                <h4 className="text-sm font-semibold text-neutral-900">
+                  Đổi mật khẩu
+                </h4>
+                <button
+                  type="button"
+                  className="text-neutral-500 hover:text-neutral-800"
+                  onClick={() => !cpLoading && setShowPwdModal(false)}
+                >
                   ✕
                 </button>
               </div>
 
               <form onSubmit={handleSubmitChangePassword} className="p-4 space-y-3">
                 <div className="text-xs text-neutral-600">
-                  ID người dùng: <span className="font-medium text-neutral-900">{userId}</span>
+                  ID người dùng:{" "}
+                  <span className="font-medium text-neutral-900">{userId}</span>
                 </div>
 
                 <div className="flex items-center border-2 py-2 px-3 rounded-xl">
@@ -1166,7 +1434,11 @@ const ProfileUsers = () => {
                     required
                     autoComplete="new-password"
                   />
-                  <button type="button" className="text-xs text-indigo-600 ml-2" onClick={() => setCpShow((s) => ({ ...s, nw: !s.nw }))}>
+                  <button
+                    type="button"
+                    className="text-xs text-indigo-600 ml-2"
+                    onClick={() => setCpShow((s) => ({ ...s, nw: !s.nw }))}
+                  >
                     {cpShow.nw ? "Ẩn" : "Hiện"}
                   </button>
                 </div>
@@ -1184,22 +1456,43 @@ const ProfileUsers = () => {
                     required
                     autoComplete="new-password"
                   />
-                  <button type="button" className="text-xs text-indigo-600 ml-2" onClick={() => setCpShow((s) => ({ ...s, cf: !s.cf }))}>
+                  <button
+                    type="button"
+                    className="text-xs text-indigo-600 ml-2"
+                    onClick={() => setCpShow((s) => ({ ...s, cf: !s.cf }))}
+                  >
                     {cpShow.cf ? "Ẩn" : "Hiện"}
                   </button>
                 </div>
 
                 {cpMsg.text && (
-                  <div className={`text-sm rounded px-3 py-2 border ${cpMsg.type === "error" ? "bg-red-50 text-red-700 border-red-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>
+                  <div
+                    className={`text-sm rounded px-3 py-2 border ${
+                      cpMsg.type === "error"
+                        ? "bg-red-50 text-red-700 border-red-200"
+                        : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                    }`}
+                  >
                     {cpMsg.text}
                   </div>
                 )}
 
                 <div className="flex items-center justify-end gap-2 pt-1">
-                  <button type="button" disabled={cpLoading} onClick={() => setShowPwdModal(false)} className="px-3 py-2 rounded-lg border border-neutral-200 text-neutral-700 hover:bg-neutral-50">
+                  <button
+                    type="button"
+                    disabled={cpLoading}
+                    onClick={() => setShowPwdModal(false)}
+                    className="px-3 py-2 rounded-lg border border-neutral-200 text-neutral-700 hover:bg-neutral-50"
+                  >
                     Hủy
                   </button>
-                  <button type="submit" disabled={cpLoading} className={`px-4 py-2 rounded-lg text-white font-semibold ${cpLoading ? "bg-indigo-400" : "bg-indigo-600 hover:bg-indigo-700"}`}>
+                  <button
+                    type="submit"
+                    disabled={cpLoading}
+                    className={`px-4 py-2 rounded-lg text-white font-semibold ${
+                      cpLoading ? "bg-indigo-400" : "bg-indigo-600 hover:bg-indigo-700"
+                    }`}
+                  >
                     {cpLoading ? "Đang cập nhật..." : "Cập nhật"}
                   </button>
                 </div>
@@ -1217,7 +1510,11 @@ const ProfileUsers = () => {
             <div className="w-full max-w-2xl bg-white rounded-xl shadow-2xl border border-neutral-200 overflow-hidden">
               <div className="p-4 border-b border-neutral-200 flex items-center justify-between">
                 <h4 className="text-sm font-semibold text-neutral-900">Vẽ chữ ký</h4>
-                <button type="button" className="text-neutral-500 hover:text-neutral-800" onClick={closeDrawModal}>
+                <button
+                  type="button"
+                  className="text-neutral-500 hover:text-neutral-800"
+                  onClick={closeDrawModal}
+                >
                   ✕
                 </button>
               </div>
@@ -1242,14 +1539,20 @@ const ProfileUsers = () => {
                     Dùng chuột hoặc tay (mobile) để ký. Nên ký trong khung trắng.
                   </div>
                   <div className="flex items-center gap-2">
-                    <button type="button" onClick={onClearCanvas} className="px-3 py-2 rounded-lg border border-neutral-300 text-neutral-700 hover:bg-neutral-50 text-sm">
+                    <button
+                      type="button"
+                      onClick={onClearCanvas}
+                      className="px-3 py-2 rounded-lg border border-neutral-300 text-neutral-700 hover:bg-neutral-50 text-sm"
+                    >
                       Xoá khung
                     </button>
                     <button
                       type="button"
                       disabled={sigLoading}
                       onClick={onSaveDrawing}
-                      className={`px-4 py-2 rounded-lg text-white font-semibold ${sigLoading ? "bg-indigo-400" : "bg-indigo-600 hover:bg-indigo-700"} text-sm`}
+                      className={`px-4 py-2 rounded-lg text-white font-semibold ${
+                        sigLoading ? "bg-indigo-400" : "bg-indigo-600 hover:bg-indigo-700"
+                      } text-sm`}
                     >
                       {sigLoading ? "Đang lưu..." : "Lưu chữ ký"}
                     </button>
@@ -1257,7 +1560,13 @@ const ProfileUsers = () => {
                 </div>
 
                 {sigMsg.text && (
-                  <div className={`mt-3 text-sm rounded px-3 py-2 border ${sigMsg.type === "error" ? "bg-red-50 text-red-700 border-red-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>
+                  <div
+                    className={`mt-3 text-sm rounded px-3 py-2 border ${
+                      sigMsg.type === "error"
+                        ? "bg-red-50 text-red-700 border-red-200"
+                        : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                    }`}
+                  >
                     {sigMsg.text}
                   </div>
                 )}
@@ -1270,12 +1579,24 @@ const ProfileUsers = () => {
       {/* Modal tạo ticket */}
       {showCreateTicket && (
         <div className="fixed inset-0 z-50">
-          <div className="absolute inset-0 bg-black/40" onClick={() => !ntLoading && setShowCreateTicket(false)} />
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => !ntLoading && setShowCreateTicket(false)}
+          />
           <div className="absolute inset-0 flex items-center justify-center p-4">
-            <form onSubmit={submitCreateTicket} className="w-full max-w-lg bg-white rounded-xl shadow-2xl border border-neutral-200 overflow-hidden">
+            <form
+              onSubmit={submitCreateTicket}
+              className="w-full max-w-lg bg-white rounded-xl shadow-2xl border border-neutral-200 overflow-hidden"
+            >
               <div className="p-4 border-b border-neutral-200 flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-neutral-900">Tạo yêu cầu sửa chữa</h4>
-                <button type="button" className="text-neutral-500 hover:text-neutral-800" onClick={() => !ntLoading && setShowCreateTicket(false)}>
+                <h4 className="text-sm font-semibold text-neutral-900">
+                  Tạo yêu cầu sửa chữa
+                </h4>
+                <button
+                  type="button"
+                  className="text-neutral-500 hover:text-neutral-800"
+                  onClick={() => !ntLoading && setShowCreateTicket(false)}
+                >
                   ✕
                 </button>
               </div>
@@ -1286,7 +1607,9 @@ const ProfileUsers = () => {
                   <select
                     className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
                     value={ntForm.id_devices}
-                    onChange={(e) => setNtForm({ ...ntForm, id_devices: e.target.value })}
+                    onChange={(e) =>
+                      setNtForm({ ...ntForm, id_devices: e.target.value })
+                    }
                     disabled={ntLoading}
                     required
                   >
@@ -1305,7 +1628,9 @@ const ProfileUsers = () => {
                     className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
                     placeholder="VD: Laptop không khởi động"
                     value={ntForm.title}
-                    onChange={(e) => setNtForm({ ...ntForm, title: e.target.value })}
+                    onChange={(e) =>
+                      setNtForm({ ...ntForm, title: e.target.value })
+                    }
                     disabled={ntLoading}
                     required
                   />
@@ -1318,7 +1643,12 @@ const ProfileUsers = () => {
                     className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
                     placeholder="Triệu chứng, khi nào xảy ra, đã thử gì…"
                     value={ntForm.issue_description}
-                    onChange={(e) => setNtForm({ ...ntForm, issue_description: e.target.value })}
+                    onChange={(e) =>
+                      setNtForm({
+                        ...ntForm,
+                        issue_description: e.target.value,
+                      })
+                    }
                     disabled={ntLoading}
                   />
                 </div>
@@ -1329,7 +1659,9 @@ const ProfileUsers = () => {
                     <select
                       className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
                       value={ntForm.severity}
-                      onChange={(e) => setNtForm({ ...ntForm, severity: e.target.value })}
+                      onChange={(e) =>
+                        setNtForm({ ...ntForm, severity: e.target.value })
+                      }
                       disabled={ntLoading}
                     >
                       <option value="critical">Critical</option>
@@ -1343,7 +1675,9 @@ const ProfileUsers = () => {
                     <select
                       className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
                       value={ntForm.priority}
-                      onChange={(e) => setNtForm({ ...ntForm, priority: e.target.value })}
+                      onChange={(e) =>
+                        setNtForm({ ...ntForm, priority: e.target.value })
+                      }
                       disabled={ntLoading}
                     >
                       <option value="urgent">Urgent</option>
@@ -1361,23 +1695,45 @@ const ProfileUsers = () => {
                     min={1}
                     className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
                     value={ntForm.sla_hours}
-                    onChange={(e) => setNtForm({ ...ntForm, sla_hours: Number(e.target.value) })}
+                    onChange={(e) =>
+                      setNtForm({
+                        ...ntForm,
+                        sla_hours: Number(e.target.value),
+                      })
+                    }
                     disabled={ntLoading}
                   />
                 </div>
 
                 {ntMsg.text && (
-                  <div className={`text-sm rounded px-3 py-2 border ${ntMsg.type === "error" ? "bg-red-50 text-red-700 border-red-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>
+                  <div
+                    className={`text-sm rounded px-3 py-2 border ${
+                      ntMsg.type === "error"
+                        ? "bg-red-50 text-red-700 border-red-200"
+                        : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                    }`}
+                  >
                     {ntMsg.text}
                   </div>
                 )}
               </div>
 
               <div className="p-4 border-t border-neutral-200 flex items-center justify-end gap-2">
-                <button type="button" disabled={ntLoading} onClick={() => setShowCreateTicket(false)} className="px-3 py-2 rounded-lg border border-neutral-200 text-neutral-700 hover:bg-neutral-50">
+                <button
+                  type="button"
+                  disabled={ntLoading}
+                  onClick={() => setShowCreateTicket(false)}
+                  className="px-3 py-2 rounded-lg border border-neutral-200 text-neutral-700 hover:bg-neutral-50"
+                >
                   Hủy
                 </button>
-                <button type="submit" disabled={ntLoading} className={`px-4 py-2 rounded-lg text-white font-semibold ${ntLoading ? "bg-indigo-400" : "bg-indigo-600 hover:bg-indigo-700"}`}>
+                <button
+                  type="submit"
+                  disabled={ntLoading}
+                  className={`px-4 py-2 rounded-lg text-white font-semibold ${
+                    ntLoading ? "bg-indigo-400" : "bg-indigo-600 hover:bg-indigo-700"
+                  }`}
+                >
                   {ntLoading ? "Đang tạo..." : "Tạo ticket"}
                 </button>
               </div>
@@ -1400,7 +1756,11 @@ const Row = ({ label, value }) => (
 );
 
 const Th = ({ children, className = "" }) => (
-  <th className={`text-left text-xs font-medium uppercase tracking-wide px-3 py-2 ${className}`}>{children}</th>
+  <th
+    className={`text-left text-xs font-medium uppercase tracking-wide px-3 py-2 ${className}`}
+  >
+    {children}
+  </th>
 );
 
 const Td = ({ children, className = "" }) => (
@@ -1415,7 +1775,8 @@ function PasswordStrength({ value }) {
     /\d/.test(value),
     /[^A-Za-z0-9]/.test(value),
   ].filter(Boolean).length;
-  const label = ["Rất yếu", "Yếu", "Trung bình", "Khá", "Mạnh", "Rất mạnh"][score] || "";
+  const label =
+    ["Rất yếu", "Yếu", "Trung bình", "Khá", "Mạnh", "Rất mạnh"][score] || "";
   const colors = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#16a34a", "#15803d"];
 
   return (
@@ -1423,7 +1784,10 @@ function PasswordStrength({ value }) {
       <div className="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
         <div
           className="h-1.5 rounded-full transition-all"
-          style={{ width: `${(score / 5) * 100}%`, backgroundColor: colors[score] || "#e5e7eb" }}
+          style={{
+            width: `${(score / 5) * 100}%`,
+            backgroundColor: colors[score] || "#e5e7eb",
+          }}
         />
       </div>
       <div className="text-[11px] text-gray-500 mt-1">Độ mạnh: {label}</div>

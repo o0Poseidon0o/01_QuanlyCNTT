@@ -1,7 +1,12 @@
 // src/services/repairsApi.js
 import axios from "../lib/httpClient"; // ✅ dùng 1 axios instance duy nhất
+
+// Ưu tiên biến môi trường nếu có
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:5000/api";
 
+/* =====================
+ * Chuẩn hoá & ánh xạ label/status/severity/priority
+ * ===================== */
 const normalizeKey = (value) =>
   String(value ?? "")
     .normalize("NFD")
@@ -14,9 +19,7 @@ const buildCanonicalFinder = (groups) => {
   const index = new Map();
   Object.entries(groups).forEach(([canonical, synonyms]) => {
     index.set(normalizeKey(canonical), canonical);
-    synonyms.forEach((syn) => {
-      index.set(normalizeKey(syn), canonical);
-    });
+    synonyms.forEach((syn) => index.set(normalizeKey(syn), canonical));
   });
   return (value) => {
     if (value == null) return undefined;
@@ -24,6 +27,7 @@ const buildCanonicalFinder = (groups) => {
   };
 };
 
+// Trạng thái theo BE (có thể mở rộng thêm nếu BE thay đổi)
 const STATUS_GROUPS = {
   requested: ["requested", "Được yêu cầu", "được yêu cầu", "duoc yeu cau"],
   approved: ["approved", "Đã duyệt", "đã duyệt", "da duyet"],
@@ -82,20 +86,21 @@ const toBackendStatus = (value) => {
   const canonical = findStatus(value);
   return canonical && STATUS_TO_DB[canonical] ? STATUS_TO_DB[canonical] : value;
 };
-
 const toBackendSeverity = (value) => {
   const canonical = findSeverity(value);
   return canonical && SEVERITY_TO_DB[canonical] ? SEVERITY_TO_DB[canonical] : value;
 };
-
 const toBackendPriority = (value) => {
   const canonical = findPriority(value);
   return canonical && PRIORITY_TO_DB[canonical] ? PRIORITY_TO_DB[canonical] : value;
 };
 
-const statusLabelFromApi = (row, statusKey) => row.status_label || STATUS_TO_DB[statusKey] || row.status;
-const severityLabelFromApi = (row, severityKey) => row.severity_label || SEVERITY_TO_DB[severityKey] || row.severity;
-const priorityLabelFromApi = (row, priorityKey) => row.priority_label || PRIORITY_TO_DB[priorityKey] || row.priority;
+const statusLabelFromApi = (row, statusKey) =>
+  row.status_label || STATUS_TO_DB[statusKey] || row.status;
+const severityLabelFromApi = (row, severityKey) =>
+  row.severity_label || SEVERITY_TO_DB[severityKey] || row.severity;
+const priorityLabelFromApi = (row, priorityKey) =>
+  row.priority_label || PRIORITY_TO_DB[priorityKey] || row.priority;
 
 const mapTicketFromApi = (row = {}) => {
   const statusKey = fromBackendStatus(row.status);
@@ -145,6 +150,10 @@ const preparePayload = (payload = {}) => {
   if ("priority" in next) next.priority = toBackendPriority(next.priority);
   return next;
 };
+
+/* =====================
+ * API gọi từ FE
+ * ===================== */
 
 export const listRepairs = async (params = {}) => {
   const res = await axios.get(`${API_BASE}/repairs`, {
@@ -206,8 +215,56 @@ export const getSummaryStats = async () => {
   return mapSummaryFromApi(res.data || {});
 };
 
-// ✅ đồng bộ dùng cùng axios instance
+// ⚙️ dropdown người xử lý & nhà cung cấp
 export const getAssigneeVendorOptions = async () => {
   const res = await axios.get(`${API_BASE}/repairs/options`);
   return res.data; // { users: [...], vendors: [...] }
 };
+
+/* =====================
+ * NEW: XÁC NHẬN HOÀN THÀNH TỪ NGƯỜI DÙNG (CHỐNG SPAM + IDEMPOTENT)
+ * ===================== */
+let confirmLock = new Set();
+
+/**
+ * Người dùng xác nhận ticket đã hoàn thành (chống spam nhiều lần)
+ * - Dùng PATCH /repairs/:id/status
+ * - Gửi new_status đã map về "Hoàn tất"
+ * - Thêm X-Idempotency-Key để BE có thể bỏ qua request trùng (nếu hỗ trợ)
+ */
+export const confirmRepair = async (id, user_id, note = "User confirmed completion") => {
+  const key = `${id}-${user_id}`;
+  if (confirmLock.has(key)) {
+    return { skipped: true };
+  }
+  confirmLock.add(key);
+
+  // Idempotency-Key ngẫu nhiên cho mỗi lần xác nhận
+  const idem =
+    (typeof window !== "undefined" && window.crypto?.randomUUID?.()) ||
+    `${id}:${user_id}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+
+  try {
+    const res = await axios.patch(
+      `${API_BASE}/repairs/${id}/status`,
+      {
+        new_status: toBackendStatus("completed"),
+        confirm_by_user: user_id,
+        note,
+        suppress_duplicate: true, // nếu BE đọc được thì sẽ no-op khi đã confirm
+      },
+      {
+        headers: {
+          "X-Idempotency-Key": idem,
+          "Cache-Control": "no-cache",
+        },
+      }
+    );
+    return res.data;
+  } finally {
+    confirmLock.delete(key);
+  }
+};
+
+// ✅ Alias để khớp import hiện tại trong ProfileUsers.jsx
+export const confirmComplete = (id, user_id, note) => confirmRepair(id, user_id, note);

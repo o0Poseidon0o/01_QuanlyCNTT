@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import axios from "../../lib/httpClient";
 import CategoryModal from "./catagoryType";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 const API_BASE = "http://localhost:5000/api";
 
-/** ===== Helpers ===== */
+/** ================= Helpers chung ================= */
 const formatDateDisplay = (iso) => {
   if (!iso) return "";
   const d = new Date(iso);
@@ -24,7 +27,7 @@ const formatDateDisplay = (iso) => {
 const isAfter = (a, b) => (a && b ? a > b : false);
 const toNullIfEmpty = (v) => (v === "" ? null : v);
 
-/** ===== SearchableSelect ===== */
+/** ================= SearchableSelect ================= */
 const SearchableSelect = ({
   value,
   onChange,
@@ -39,28 +42,38 @@ const SearchableSelect = ({
   const wrapperRef = useRef(null);
 
   const selectedLabel = useMemo(() => {
-    const found = (options || []).find((o) => String(o[valueKey]) === String(value));
+    const found = (options || []).find(
+      (o) => String(o[valueKey]) === String(value)
+    );
     return found ? found[displayKey] : "";
   }, [options, value, displayKey, valueKey]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return options || [];
-    return (options || []).filter((o) => String(o[displayKey]).toLowerCase().includes(q));
+    return (options || []).filter((o) =>
+      String(o[displayKey]).toLowerCase().includes(q)
+    );
   }, [options, query, displayKey]);
 
   useEffect(() => {
     const handler = (e) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) setOpen(false);
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target))
+        setOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
   return (
-    <div className={`relative ${disabled ? "opacity-60 cursor-not-allowed" : ""}`} ref={wrapperRef}>
+    <div
+      className={`relative ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
+      ref={wrapperRef}
+    >
       <div
-        className={`border rounded p-2 bg-white ${disabled ? "" : "cursor-text"}`}
+        className={`border rounded p-2 bg-white ${
+          disabled ? "" : "cursor-text"
+        }`}
         onClick={() => !disabled && setOpen((s) => !s)}
       >
         {selectedLabel || <span className="text-gray-400">{placeholder}</span>}
@@ -98,6 +111,99 @@ const SearchableSelect = ({
   );
 };
 
+/** ================== Tải font & logo cho PDF (Roboto-only) ================== */
+const _assetCache = {
+  family: null,        // "Roboto" | "helvetica"
+  regularB64: null,
+  boldB64: null,
+  logo: null,
+};
+
+// ArrayBuffer -> base64 (chunked) để tránh tràn stack
+function arrayBufferToBase64(buf) {
+  const bytes = new Uint8Array(buf);
+  const chunk = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+// Đăng ký font trong cache vào tài liệu jsPDF
+function registerCachedFont(doc) {
+  if (!_assetCache.family || !_assetCache.regularB64) return false;
+  const fam = _assetCache.family;
+
+  doc.addFileToVFS(`${fam}-Regular.ttf`, _assetCache.regularB64);
+  doc.addFont(`${fam}-Regular.ttf`, fam, "normal");
+
+  if (_assetCache.boldB64) {
+    doc.addFileToVFS(`${fam}-Bold.ttf`, _assetCache.boldB64);
+    doc.addFont(`${fam}-Bold.ttf`, fam, "bold");
+  } else {
+    doc.addFont(`${fam}-Regular.ttf`, fam, "bold"); // giả lập bold
+  }
+  return true;
+}
+
+/**
+ * Chỉ nạp Roboto từ /public/fonts.
+ * Nếu lỗi => dùng helvetica (font phổ biến có sẵn của jsPDF).
+ */
+async function loadVietnameseFontToDoc(doc) {
+  // Nếu đã có cache, chỉ cần đăng ký lại vào doc mới
+  if (registerCachedFont(doc)) {
+    return { ok: _assetCache.family !== "helvetica", family: _assetCache.family };
+  }
+
+  try {
+    const regRes = await fetch("/fonts/Roboto-Regular.ttf");
+    if (!regRes.ok) throw new Error("Roboto-Regular.ttf not found");
+    const regularB64 = arrayBufferToBase64(await regRes.arrayBuffer());
+
+    let boldB64 = null;
+    try {
+      const boldRes = await fetch("/fonts/Roboto-Bold.ttf");
+      if (boldRes.ok) boldB64 = arrayBufferToBase64(await boldRes.arrayBuffer());
+    } catch {}
+
+    _assetCache.family = "Roboto";
+    _assetCache.regularB64 = regularB64;
+    _assetCache.boldB64 = boldB64;
+
+    registerCachedFont(doc);
+    return { ok: true, family: "Roboto" };
+  } catch (e) {
+    console.warn("Không nạp được Roboto, fallback helvetica:", e?.message || e);
+    _assetCache.family = "helvetica";
+    _assetCache.regularB64 = null;
+    _assetCache.boldB64 = null;
+    return { ok: false, family: "helvetica" };
+  }
+}
+
+// Logo: đặt tại /public/images/logo/logo_towa.png
+async function loadLogoDataURL(url = "/images/logo/logo_towa.png") {
+  if (_assetCache.logo) return _assetCache.logo;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Logo HTTP ${res.status}`);
+    const blob = await res.blob();
+    const dataUrl = await new Promise((resolve) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.readAsDataURL(blob);
+    });
+    _assetCache.logo = dataUrl;
+    return dataUrl;
+  } catch (e) {
+    console.warn("Không tải được logo:", e);
+    return null;
+  }
+}
+
+/** ================== Component chính ================== */
 const TechEquipment = () => {
   const [devices, setDevices] = useState([]);
   const [activeCountMap, setActiveCountMap] = useState({});
@@ -106,9 +212,12 @@ const TechEquipment = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [isAddModalOpen, setAddModalOpen] = useState(false);
   const [isEditModalOpen, setEditModalOpen] = useState(false);
-  const [categoryModal, setCategoryModal] = useState({ open: false, type: null });
+  const [categoryModal, setCategoryModal] = useState({
+    open: false,
+    type: null,
+  });
 
-  // Modal xem ai đang dùng
+  const [assignModal, setAssignModal] = useState({ open: false, device: null });
   const [activeUsersModal, setActiveUsersModal] = useState({
     open: false,
     device: null,
@@ -116,11 +225,8 @@ const TechEquipment = () => {
     loading: false,
   });
 
-  // Modal gán thêm user
-  const [assignModal, setAssignModal] = useState({ open: false, device: null });
-
-  // Quyền
-  const role = typeof window !== "undefined" ? localStorage.getItem("role") : null;
+  const role =
+    typeof window !== "undefined" ? localStorage.getItem("role") : null;
   const isAdmin = role === "admin";
 
   const [dropdownData, setDropdownData] = useState({
@@ -146,10 +252,8 @@ const TechEquipment = () => {
     date_warranty: "",
   });
 
-  // --- Sort theo ID ---
   const [idSortDir, setIdSortDir] = useState("desc");
 
-  // Lấy danh sách thiết bị
   const fetchDevices = async () => {
     try {
       const res = await axios.get(`${API_BASE}/devices/all`, {
@@ -168,7 +272,6 @@ const TechEquipment = () => {
     }
   };
 
-  // Lấy map đếm số user đang dùng theo thiết bị
   const fetchActiveCountMap = async () => {
     try {
       const res = await axios.get(`${API_BASE}/assignments/active-count`, {
@@ -182,18 +285,37 @@ const TechEquipment = () => {
     }
   };
 
-  // Lấy dropdown
   const fetchDropdownData = async () => {
     const common = {
       headers: { "Cache-Control": "no-cache" },
       params: { t: Date.now() },
     };
     const endpoints = [
-      { key: "devicetypes", url: `${API_BASE}/devicestype/all`, pick: (r) => r.data?.devicetypes ?? r.data ?? [] },
-      { key: "cpus", url: `${API_BASE}/cpu/all`, pick: (r) => r.data?.cpus ?? r.data ?? [] },
-      { key: "rams", url: `${API_BASE}/ram/all`, pick: (r) => r.data?.rams ?? r.data ?? [] },
-      { key: "memories", url: `${API_BASE}/memory/all`, pick: (r) => r.data?.memories ?? r.data ?? [] },
-      { key: "screens", url: `${API_BASE}/screen/all`, pick: (r) => r.data?.screens ?? r.data ?? [] },
+      {
+        key: "devicetypes",
+        url: `${API_BASE}/devicestype/all`,
+        pick: (r) => r.data?.devicetypes ?? r.data ?? [],
+      },
+      {
+        key: "cpus",
+        url: `${API_BASE}/cpu/all`,
+        pick: (r) => r.data?.cpus ?? r.data ?? [],
+      },
+      {
+        key: "rams",
+        url: `${API_BASE}/ram/all`,
+        pick: (r) => r.data?.rams ?? r.data ?? [],
+      },
+      {
+        key: "memories",
+        url: `${API_BASE}/memory/all`,
+        pick: (r) => r.data?.memories ?? r.data ?? [],
+      },
+      {
+        key: "screens",
+        url: `${API_BASE}/screen/all`,
+        pick: (r) => r.data?.screens ?? r.data ?? [],
+      },
       {
         key: "operationsystems",
         url: `${API_BASE}/operations/all`,
@@ -202,12 +324,15 @@ const TechEquipment = () => {
       {
         key: "users",
         url: `${API_BASE}/users/all`,
-        pick: (r) => (Array.isArray(r.data?.users) ? r.data.users : r.data ?? []),
+        pick: (r) =>
+          Array.isArray(r.data?.users) ? r.data.users : r.data ?? [],
       },
     ];
 
     try {
-      const settled = await Promise.allSettled(endpoints.map((e) => axios.get(e.url, common)));
+      const settled = await Promise.allSettled(
+        endpoints.map((e) => axios.get(e.url, common))
+      );
       const next = {
         devicetypes: [],
         cpus: [],
@@ -229,7 +354,10 @@ const TechEquipment = () => {
         } else {
           next[key] = [];
           if (process.env.NODE_ENV !== "production") {
-            console.warn(`[Dropdown] ${key} failed:`, res.reason?.message || res.reason);
+            console.warn(
+              `[Dropdown] ${key} failed:`,
+              res.reason?.message || res.reason
+            );
           }
         }
       });
@@ -248,7 +376,6 @@ const TechEquipment = () => {
     }
   };
 
-  // Lấy danh sách user đang dùng cho mỗi thiết bị
   const fetchActiveUsersMap = async (listArg) => {
     const list = Array.isArray(listArg) && listArg.length ? listArg : devices;
     try {
@@ -270,7 +397,10 @@ const TechEquipment = () => {
                 headers: { "Cache-Control": "no-cache" },
                 params: { t: Date.now() },
               })
-              .then((r) => ({ id: d.id_devices, rows: Array.isArray(r.data) ? r.data : [] }))
+              .then((r) => ({
+                id: d.id_devices,
+                rows: Array.isArray(r.data) ? r.data : [],
+              }))
           )
         );
         const map = {};
@@ -299,17 +429,17 @@ const TechEquipment = () => {
     })();
   }, []);
 
-  // Filter theo tên thiết bị hoặc user đang dùng (assignments)
   const filteredDevices = devices.filter((d) => {
     const q = (searchTerm || "").toLowerCase();
     if (!q) return true;
     const nameOk = (d.name_devices || "").toLowerCase().includes(q);
     const users = activeUsersMap[String(d.id_devices)] || [];
-    const userOk = users.some((u) => (u?.username || "").toLowerCase().includes(q));
+    const userOk = users.some((u) =>
+      (u?.username || "").toLowerCase().includes(q)
+    );
     return nameOk || userOk;
   });
 
-  // Sort theo ID
   const sortedFilteredDevices = useMemo(() => {
     const parseMaybeNumber = (v) => {
       const n = Number(v);
@@ -324,7 +454,164 @@ const TechEquipment = () => {
     });
   }, [filteredDevices, idSortDir]);
 
-  // MỞ modal thêm/sửa
+  /** ================== Export Excel ================== */
+  const exportToExcel = () => {
+    const rows = sortedFilteredDevices.length ? sortedFilteredDevices : devices;
+    if (!rows.length) {
+      alert("Không có dữ liệu để xuất Excel.");
+      return;
+    }
+    const data = rows.map((d) => ({
+      "ID Thiết bị": d.id_devices,
+      "Loại thiết bị": d?.Devicetype?.device_type || "",
+      "Tên thiết bị": d.name_devices,
+      CPU: d?.Cpu?.name_cpu || "",
+      RAM: d?.Ram?.name_ram || "",
+      "Ổ cứng": d?.Memory
+        ? `${d.Memory.memory_type} ${d.Memory.size_memory}`
+        : "",
+      "Màn hình": d?.Screen
+        ? `${d.Screen.name_screen} ${d.Screen.size_screen}`
+        : "",
+      "Hệ điều hành": d?.Operationsystem?.name_operationsystem || "",
+      "Ngày mua": formatDateDisplay(d.date_buydevices),
+      "Ngày bảo hành": formatDateDisplay(d.date_warranty),
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Thông tin thiết bị");
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const dd = String(now.getDate()).padStart(2, "0");
+    XLSX.writeFile(wb, `ThongTinThietBi_${yyyy}${mm}${dd}.xlsx`);
+  };
+
+  /** ================== Export PDF (A3 ngang + Logo + Unicode) ================== */
+  const exportToPDF = async () => {
+    const rows = sortedFilteredDevices.length ? sortedFilteredDevices : devices;
+    if (!rows.length) {
+      alert("Không có dữ liệu để xuất PDF.");
+      return;
+    }
+
+    const doc = new jsPDF("l", "mm", "a3");
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const marginX = 14;
+    const marginY = 12;
+
+    // Nạp font Roboto (fallback helvetica)
+    const { family } = await loadVietnameseFontToDoc(doc);
+    doc.setFont(family, "bold");
+
+    // Header: Logo trái + Tiêu đề giữa + Ngày phải
+    const logo = await loadLogoDataURL("/images/logo/logo_towa.png");
+    const LOGO_W = 70, LOGO_H = 22;
+    const topY = marginY;
+
+    if (logo) {
+      try {
+        doc.addImage(logo, "PNG", marginX, topY, LOGO_W, LOGO_H);
+      } catch (e) {
+        console.warn("Không chèn được logo:", e);
+      }
+    }
+
+    const title = "THÔNG TIN THIẾT BỊ";
+    doc.setFontSize(26);
+    const titleW = doc.getTextWidth(title);
+    doc.text(title, (pageW - titleW) / 2, topY + 14);
+
+    doc.setFont(family, "normal");
+    doc.setFontSize(11);
+    const now = new Date();
+    const dateStr = `Ngày xuất: ${String(now.getDate()).padStart(
+      2,
+      "0"
+    )}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+    const dateW = doc.getTextWidth(dateStr);
+    doc.text(dateStr, pageW - marginX - dateW, topY + 18);
+
+    const columns = [
+      { header: "ID", dataKey: "id" },
+      { header: "Loại thiết bị", dataKey: "devicetype" },
+      { header: "Tên thiết bị", dataKey: "name" },
+      { header: "CPU", dataKey: "cpu" },
+      { header: "RAM", dataKey: "ram" },
+      { header: "Ổ cứng", dataKey: "memory" },
+      { header: "Màn hình", dataKey: "screen" },
+      { header: "Hệ điều hành", dataKey: "os" },
+      { header: "Ngày mua", dataKey: "buy" },
+      { header: "Ngày bảo hành", dataKey: "warranty" },
+    ];
+
+    const data = rows.map((d) => ({
+      id: d.id_devices ?? "",
+      devicetype: d?.Devicetype?.device_type ?? "",
+      name: d?.name_devices ?? "",
+      cpu: d?.Cpu?.name_cpu ?? "",
+      ram: d?.Ram?.name_ram ?? "",
+      memory: d?.Memory
+        ? `${d.Memory.memory_type} ${d.Memory.size_memory}`
+        : "",
+      screen: d?.Screen
+        ? `${d.Screen.name_screen} ${d.Screen.size_screen}`
+        : "",
+      os: d?.Operationsystem?.name_operationsystem ?? "",
+      buy: formatDateDisplay(d.date_buydevices),
+      warranty: formatDateDisplay(d.date_warranty),
+    }));
+
+    autoTable(doc, {
+      startY: topY + LOGO_H + 6,
+      margin: { left: marginX, right: marginX },
+      columns,
+      body: data,
+      styles: {
+        font: family,
+        fontSize: 9,
+        cellPadding: 2,
+        overflow: "linebreak",
+        valign: "middle",
+      },
+      headStyles: {
+        font: family,
+        fontStyle: "bold",
+        fillColor: [52, 152, 219],
+        textColor: 255,
+      },
+      columnStyles: {
+        id: { cellWidth: 18 },
+        devicetype: { cellWidth: 40 },
+        name: { cellWidth: 70 },
+        cpu: { cellWidth: 35 },
+        ram: { cellWidth: 28 },
+        memory: { cellWidth: 40 },
+        screen: { cellWidth: 38 },
+        os: { cellWidth: 40 },
+        buy: { cellWidth: 28 },
+        warranty: { cellWidth: 30 },
+      },
+      didDrawPage: () => {
+        doc.setFont(family, "normal");
+        doc.setFontSize(10);
+        const str = `Trang ${doc.internal.getNumberOfPages()}`;
+        const strW = doc.getTextWidth(str);
+        doc.text(str, pageW - marginX - strW, pageH - 6);
+      },
+      pageBreak: "auto",
+      tableWidth: "auto",
+    });
+
+    doc.save(
+      `ThongTinThietBi_${now.getFullYear()}${String(
+        now.getMonth() + 1
+      ).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}.pdf`
+    );
+  };
+
+  /** ================== CRUD & UI ================== */
   const openAddModal = async () => {
     if (!isAdmin) return alert("Bạn không có quyền thực hiện thao tác này.");
     await fetchDropdownData();
@@ -347,20 +634,22 @@ const TechEquipment = () => {
     await fetchDropdownData();
     setFormData({
       ...device,
-      id_devicetype: device.id_devicetype ?? device.Devicetype?.id_devicetype ?? "",
+      id_devicetype:
+        device.id_devicetype ?? device.Devicetype?.id_devicetype ?? "",
       id_cpu: device.id_cpu ?? device.Cpu?.id_cpu ?? "",
       id_ram: device.id_ram ?? device.Ram?.id_ram ?? "",
       id_memory: device.id_memory ?? device.Memory?.id_memory ?? "",
       id_screen: device.id_screen ?? device.Screen?.id_screen ?? "",
-      id_operationsystem: device.id_operationsystem ?? device.Operationsystem?.id_operationsystem ?? "",
+      id_operationsystem:
+        device.id_operationsystem ??
+        device.Operationsystem?.id_operationsystem ??
+        "",
     });
     setEditModalOpen(true);
   };
-
   const closeAddModal = () => setAddModalOpen(false);
   const closeEditModal = () => setEditModalOpen(false);
 
-  // Validate ngày
   const validateDates = () => {
     const { date_buydevices, date_warranty } = formData;
     if (!date_buydevices || !date_warranty) return true;
@@ -371,7 +660,6 @@ const TechEquipment = () => {
     return true;
   };
 
-  // Chuẩn hóa payload gửi backend
   const normalizePayload = (payload) => ({
     id_devices: payload.id_devices,
     id_devicetype: toNullIfEmpty(payload.id_devicetype),
@@ -385,15 +673,19 @@ const TechEquipment = () => {
     date_warranty: payload.date_warranty,
   });
 
-  // CRUD API
   const addDevice = async () => {
     if (!isAdmin) return alert("Bạn không có quyền thực hiện thao tác này.");
     if (!validateDates()) return;
-
-    if (!formData.id_devices || !formData.name_devices || !formData.date_buydevices || !formData.date_warranty) {
-      return alert("Vui lòng nhập đủ: ID thiết bị, Tên thiết bị, Ngày mua, Ngày bảo hành.");
+    if (
+      !formData.id_devices ||
+      !formData.name_devices ||
+      !formData.date_buydevices ||
+      !formData.date_warranty
+    ) {
+      return alert(
+        "Vui lòng nhập đủ: ID thiết bị, Tên thiết bị, Ngày mua, Ngày bảo hành."
+      );
     }
-
     try {
       const payload = normalizePayload(formData);
       await axios.post(`${API_BASE}/devices/add`, payload);
@@ -415,7 +707,10 @@ const TechEquipment = () => {
     if (!isAdmin) return alert("Bạn không có quyền thực hiện thao tác này.");
     if (!validateDates()) return;
     try {
-      await axios.put(`${API_BASE}/devices/update/${formData.id_devices}`, normalizePayload(formData));
+      await axios.put(
+        `${API_BASE}/devices/update/${formData.id_devices}`,
+        normalizePayload(formData)
+      );
       const list = await fetchDevices();
       await Promise.all([fetchActiveCountMap(), fetchDropdownData()]);
       await fetchActiveUsersMap(list);
@@ -441,14 +736,22 @@ const TechEquipment = () => {
     }
   };
 
-  // ====== Active Users Modal ======
   const openActiveUsersModal = async (device) => {
-    setActiveUsersModal((prev) => ({ ...prev, open: true, device, loading: true, users: [] }));
+    setActiveUsersModal((prev) => ({
+      ...prev,
+      open: true,
+      device,
+      loading: true,
+      users: [],
+    }));
     try {
-      const res = await axios.get(`${API_BASE}/assignments/active/${device.id_devices}`, {
-        headers: { "Cache-Control": "no-cache" },
-        params: { t: Date.now() },
-      });
+      const res = await axios.get(
+        `${API_BASE}/assignments/active/${device.id_devices}`,
+        {
+          headers: { "Cache-Control": "no-cache" },
+          params: { t: Date.now() },
+        }
+      );
       setActiveUsersModal({
         open: true,
         device,
@@ -461,13 +764,24 @@ const TechEquipment = () => {
     }
   };
   const closeActiveUsersModal = () =>
-    setActiveUsersModal({ open: false, device: null, users: [], loading: false });
+    setActiveUsersModal({
+      open: false,
+      device: null,
+      users: [],
+      loading: false,
+    });
 
   const checkoutUserFromDevice = async (id_users, id_devices) => {
     if (!isAdmin) return alert("Bạn không có quyền thực hiện thao tác này.");
     try {
-      await axios.post(`${API_BASE}/assignments/checkout`, { id_users, id_devices });
-      await openActiveUsersModal({ id_devices, name_devices: activeUsersModal.device?.name_devices || "" });
+      await axios.post(`${API_BASE}/assignments/checkout`, {
+        id_users,
+        id_devices,
+      });
+      await openActiveUsersModal({
+        id_devices,
+        name_devices: activeUsersModal.device?.name_devices || "",
+      });
       await fetchActiveCountMap();
       await fetchActiveUsersMap();
     } catch (e) {
@@ -475,27 +789,35 @@ const TechEquipment = () => {
     }
   };
 
-  // ====== Assign User Modal ======
   const openAssignModal = (device) => setAssignModal({ open: true, device });
   const closeAssignModal = () => setAssignModal({ open: false, device: null });
-
   const doAssignUser = async (userId, deviceId) => {
     if (!isAdmin) return alert("Bạn không có quyền thực hiện thao tác này.");
     if (!userId) return alert("Chọn người dùng trước khi gán.");
     try {
-      await axios.post(`${API_BASE}/assignments/checkin`, { id_users: userId, id_devices: deviceId });
+      await axios.post(`${API_BASE}/assignments/checkin`, {
+        id_users: userId,
+        id_devices: deviceId,
+      });
       await fetchActiveCountMap();
       await fetchActiveUsersMap();
-      if (activeUsersModal.open && activeUsersModal.device?.id_devices === deviceId) {
-        await openActiveUsersModal({ id_devices: deviceId, name_devices: activeUsersModal.device?.name_devices || "" });
+      if (
+        activeUsersModal.open &&
+        activeUsersModal.device?.id_devices === deviceId
+      ) {
+        await openActiveUsersModal({
+          id_devices: deviceId,
+          name_devices: activeUsersModal.device?.name_devices || "",
+        });
       }
       closeAssignModal();
     } catch (e) {
-      alert(e?.response?.data?.message || "Không thể thêm người dùng vào thiết bị");
+      alert(
+        e?.response?.data?.message || "Không thể thêm người dùng vào thiết bị"
+      );
     }
   };
 
-  // CategoryModal
   const openCategoryModal = (type) => {
     if (!isAdmin) return alert("Bạn không có quyền thực hiện thao tác này.");
     setCategoryModal({ open: true, type });
@@ -513,15 +835,29 @@ const TechEquipment = () => {
         <i className="fas fa-laptop mr-3"></i> Quản lý thiết bị CNTT
       </h2>
 
-      {/* Thanh tìm kiếm + nút thêm */}
+      {/* Thanh tìm kiếm + Export + Thêm */}
       <div className="flex justify-between mb-4">
-        <input
-          type="text"
-          placeholder="Tìm kiếm theo tên thiết bị hoặc người dùng..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="border p-2 rounded w-1/3"
-        />
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder="Tìm kiếm theo tên thiết bị hoặc người dùng..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="border p-2 rounded w-80"
+          />
+          <button
+            onClick={exportToExcel}
+            className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+          >
+            ⬇️ Xuất Excel
+          </button>
+          <button
+            onClick={exportToPDF}
+            className="bg-rose-600 text-white px-4 py-2 rounded hover:bg-rose-700"
+          >
+            ⏺️ Xuất PDF
+          </button>
+        </div>
         {isAdmin && (
           <button
             onClick={openAddModal}
@@ -541,11 +877,15 @@ const TechEquipment = () => {
                 <button
                   type="button"
                   className="flex items-center gap-1 select-none"
-                  onClick={() => setIdSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+                  onClick={() =>
+                    setIdSortDir((d) => (d === "asc" ? "desc" : "asc"))
+                  }
                   title="Sắp xếp theo ID"
                 >
-                  ID
-                  <span className="text-xs">{idSortDir === "asc" ? "▲" : "▼"}</span>
+                  ID{" "}
+                  <span className="text-xs">
+                    {idSortDir === "asc" ? "▲" : "▼"}
+                  </span>
                 </button>
               </th>
               <th className="py-2 px-3">
@@ -562,7 +902,8 @@ const TechEquipment = () => {
               </th>
               <th className="py-2 px-3">Tên thiết bị</th>
               <th className="py-2 px-3">
-                Người dùng <span className="text-xs text-gray-500">(từ assignments)</span>
+                Người dùng{" "}
+                <span className="text-xs text-gray-500">(từ assignments)</span>
               </th>
               <th className="py-2 px-3">Đang dùng</th>
               <th className="py-2 px-3">Ngày mua</th>
@@ -632,7 +973,8 @@ const TechEquipment = () => {
           </thead>
           <tbody>
             {sortedFilteredDevices.map((device) => {
-              const activeCnt = activeCountMap?.[String(device.id_devices)] ?? 0;
+              const activeCnt =
+                activeCountMap?.[String(device.id_devices)] ?? 0;
               const users = activeUsersMap?.[String(device.id_devices)] || [];
               const names = users.map((u) => u.username).filter(Boolean);
               const preview = names.slice(0, 2);
@@ -641,10 +983,10 @@ const TechEquipment = () => {
               return (
                 <tr key={device.id_devices} className="border-t">
                   <td className="py-2 px-3">{device.id_devices}</td>
-                  <td className="py-2 px-3">{device?.Devicetype?.device_type || "—"}</td>
+                  <td className="py-2 px-3">
+                    {device?.Devicetype?.device_type || "—"}
+                  </td>
                   <td className="py-2 px-3">{device.name_devices}</td>
-
-                  {/* Cột người dùng: chỉ tên */}
                   <td className="py-2 px-3">
                     {names.length ? (
                       <div className="flex items-center gap-2 flex-wrap">
@@ -658,7 +1000,10 @@ const TechEquipment = () => {
                           </span>
                         ))}
                         {extra > 0 && (
-                          <span className="text-gray-500 text-sm" title={names.join(", ")}>
+                          <span
+                            className="text-gray-500 text-sm"
+                            title={names.join(", ")}
+                          >
                             +{extra}
                           </span>
                         )}
@@ -669,8 +1014,6 @@ const TechEquipment = () => {
                       </div>
                     )}
                   </td>
-
-                  {/* Cột Đang dùng: có icon xem chi tiết */}
                   <td className="py-2 px-3">
                     <div className="flex items-center gap-3">
                       <span
@@ -689,18 +1032,27 @@ const TechEquipment = () => {
                       </button>
                     </div>
                   </td>
-
-                  <td className="py-2 px-3">{formatDateDisplay(device.date_buydevices)}</td>
-                  <td className="py-2 px-3">{formatDateDisplay(device.date_warranty)}</td>
+                  <td className="py-2 px-3">
+                    {formatDateDisplay(device.date_buydevices)}
+                  </td>
+                  <td className="py-2 px-3">
+                    {formatDateDisplay(device.date_warranty)}
+                  </td>
                   <td className="py-2 px-3">{device?.Cpu?.name_cpu || "—"}</td>
                   <td className="py-2 px-3">{device?.Ram?.name_ram || "—"}</td>
                   <td className="py-2 px-3">
-                    {device?.Screen ? `${device.Screen.name_screen} (${device.Screen.size_screen})` : "—"}
+                    {device?.Screen
+                      ? `${device.Screen.name_screen} (${device.Screen.size_screen})`
+                      : "—"}
                   </td>
                   <td className="py-2 px-3">
-                    {device?.Memory ? `${device.Memory.memory_type} ${device.Memory.size_memory}` : "—"}
+                    {device?.Memory
+                      ? `${device.Memory.memory_type} ${device.Memory.size_memory}`
+                      : "—"}
                   </td>
-                  <td className="py-2 px-3">{device?.Operationsystem?.name_operationsystem || "—"}</td>
+                  <td className="py-2 px-3">
+                    {device?.Operationsystem?.name_operationsystem || "—"}
+                  </td>
                   {isAdmin && (
                     <td className="py-2 px-3 flex space-x-2">
                       <button
@@ -722,7 +1074,10 @@ const TechEquipment = () => {
             })}
             {sortedFilteredDevices.length === 0 && (
               <tr>
-                <td className="py-4 px-3 text-center text-gray-500" colSpan={isAdmin ? 13 : 12}>
+                <td
+                  className="py-4 px-3 text-center text-gray-500"
+                  colSpan={isAdmin ? 13 : 12}
+                >
                   Không có thiết bị
                 </td>
               </tr>
@@ -731,7 +1086,6 @@ const TechEquipment = () => {
         </table>
       </div>
 
-      {/* Modal thêm / sửa */}
       {(isAddModalOpen || isEditModalOpen) && (
         <DeviceModal
           title={isAddModalOpen ? "Thêm thiết bị" : "Sửa thiết bị"}
@@ -741,11 +1095,10 @@ const TechEquipment = () => {
           onClose={isAddModalOpen ? closeAddModal : closeEditModal}
           dropdownData={dropdownData}
           isAdmin={isAdmin}
-          isEdit={isEditModalOpen}   // <<< truyền cờ Sửa/Thêm đúng cách
+          isEdit={isEditModalOpen}
         />
       )}
 
-      {/* Modal xem ai đang dùng */}
       {activeUsersModal.open && (
         <ActiveUsersModal
           device={activeUsersModal.device}
@@ -758,7 +1111,6 @@ const TechEquipment = () => {
         />
       )}
 
-      {/* Modal gán thêm người dùng */}
       {assignModal.open && (
         <AssignUserModal
           device={assignModal.device}
@@ -772,7 +1124,6 @@ const TechEquipment = () => {
         />
       )}
 
-      {/* Category Modal */}
       {categoryModal.open && (
         <CategoryModal type={categoryModal.type} onClose={closeCategoryModal} />
       )}
@@ -780,7 +1131,7 @@ const TechEquipment = () => {
   );
 };
 
-/** ===== Modal Thêm/Sửa thiết bị ===== */
+/** ================== Modals ================== */
 const DeviceModal = ({
   title,
   formData,
@@ -789,20 +1140,32 @@ const DeviceModal = ({
   onClose,
   dropdownData,
   isAdmin,
-  isEdit, // <<< nhận từ cha, KHÔNG tự suy ra
+  isEdit,
 }) => {
-  const makeOptions = (arr, mapFn) => (Array.isArray(arr) ? arr.map(mapFn) : []);
-
+  const makeOptions = (arr, mapFn) =>
+    Array.isArray(arr) ? arr.map(mapFn) : [];
   const devicetypeOptions = useMemo(
-    () => makeOptions(dropdownData.devicetypes, (x) => ({ value: x.id_devicetype, label: x.device_type })),
+    () =>
+      makeOptions(dropdownData.devicetypes, (x) => ({
+        value: x.id_devicetype,
+        label: x.device_type,
+      })),
     [dropdownData.devicetypes]
   );
   const cpuOptions = useMemo(
-    () => makeOptions(dropdownData.cpus, (x) => ({ value: x.id_cpu, label: x.name_cpu })),
+    () =>
+      makeOptions(dropdownData.cpus, (x) => ({
+        value: x.id_cpu,
+        label: x.name_cpu,
+      })),
     [dropdownData.cpus]
   );
   const ramOptions = useMemo(
-    () => makeOptions(dropdownData.rams, (x) => ({ value: x.id_ram, label: x.name_ram })),
+    () =>
+      makeOptions(dropdownData.rams, (x) => ({
+        value: x.id_ram,
+        label: x.name_ram,
+      })),
     [dropdownData.rams]
   );
   const memoryOptions = useMemo(
@@ -832,78 +1195,86 @@ const DeviceModal = ({
 
   const inputCls = `border p-2 rounded ${!isAdmin ? "bg-gray-100" : ""}`;
 
-  const handleSave = () => {
-    onSubmit(); // add hoặc update
-  };
-
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
       <div className="bg-white p-6 rounded shadow-md w-[760px] max-w-[95vw]">
         <h2 className="text-xl mb-4">{title}</h2>
         <div className="grid grid-cols-2 gap-4 mb-4">
-          {/* ID: khi SỬA readonly; khi THÊM nhập tự do */}
           <input
             name="id_devices"
             value={formData.id_devices}
-            onChange={(e) => setFormData((prev) => ({ ...prev, id_devices: e.target.value }))}
+            onChange={(e) =>
+              setFormData((prev) => ({ ...prev, id_devices: e.target.value }))
+            }
             placeholder="ID thiết bị"
             className={`border p-2 rounded ${isEdit ? "bg-gray-100" : ""}`}
             readOnly={!isAdmin || isEdit}
             title={isEdit ? "ID thiết bị (không thể sửa)" : "Nhập ID thiết bị"}
           />
-
           <input
             name="name_devices"
             value={formData.name_devices}
-            onChange={(e) => setFormData((prev) => ({ ...prev, name_devices: e.target.value }))}
+            onChange={(e) =>
+              setFormData((prev) => ({ ...prev, name_devices: e.target.value }))
+            }
             placeholder="Tên thiết bị"
             className={inputCls}
             readOnly={!isAdmin}
           />
-
           <SearchableSelect
             value={formData.id_devicetype}
-            onChange={(val) => setFormData((prev) => ({ ...prev, id_devicetype: val }))}
+            onChange={(val) =>
+              setFormData((prev) => ({ ...prev, id_devicetype: val }))
+            }
             options={devicetypeOptions}
             placeholder="Chọn loại thiết bị"
             disabled={!isAdmin}
           />
           <SearchableSelect
             value={formData.id_cpu}
-            onChange={(val) => setFormData((prev) => ({ ...prev, id_cpu: val }))}
+            onChange={(val) =>
+              setFormData((prev) => ({ ...prev, id_cpu: val }))
+            }
             options={cpuOptions}
             placeholder="Chọn CPU"
             disabled={!isAdmin}
           />
           <SearchableSelect
             value={formData.id_ram}
-            onChange={(val) => setFormData((prev) => ({ ...prev, id_ram: val }))}
+            onChange={(val) =>
+              setFormData((prev) => ({ ...prev, id_ram: val }))
+            }
             options={ramOptions}
             placeholder="Chọn RAM"
             disabled={!isAdmin}
           />
           <SearchableSelect
             value={formData.id_memory}
-            onChange={(val) => setFormData((prev) => ({ ...prev, id_memory: val }))}
+            onChange={(val) =>
+              setFormData((prev) => ({ ...prev, id_memory: val }))
+            }
             options={memoryOptions}
             placeholder="Chọn bộ nhớ"
             disabled={!isAdmin}
           />
           <SearchableSelect
             value={formData.id_screen}
-            onChange={(val) => setFormData((prev) => ({ ...prev, id_screen: val }))}
+            onChange={(val) =>
+              setFormData((prev) => ({ ...prev, id_screen: val }))
+            }
             options={screenOptions}
             placeholder="Chọn màn hình"
             disabled={!isAdmin}
           />
           <SearchableSelect
             value={formData.id_operationsystem}
-            onChange={(val) => setFormData((prev) => ({ ...prev, id_operationsystem: val }))}
+            onChange={(val) =>
+              setFormData((prev) => ({ ...prev, id_operationsystem: val }))
+            }
             options={osOptions}
             placeholder="Chọn hệ điều hành"
             disabled={!isAdmin}
           />
-
           <input
             type="date"
             name="date_buydevices"
@@ -913,7 +1284,9 @@ const DeviceModal = ({
                 ...prev,
                 date_buydevices: e.target.value,
                 date_warranty:
-                  prev.date_warranty && prev.date_warranty < e.target.value ? e.target.value : prev.date_warranty,
+                  prev.date_warranty && prev.date_warranty < e.target.value
+                    ? e.target.value
+                    : prev.date_warranty,
               }))
             }
             className={inputCls}
@@ -924,18 +1297,28 @@ const DeviceModal = ({
             name="date_warranty"
             value={formData.date_warranty}
             min={formData.date_buydevices || undefined}
-            onChange={(e) => setFormData((prev) => ({ ...prev, date_warranty: e.target.value }))}
+            onChange={(e) =>
+              setFormData((prev) => ({
+                ...prev,
+                date_warranty: e.target.value,
+              }))
+            }
             className={inputCls}
             readOnly={!isAdmin}
           />
         </div>
-
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700">
+          <button
+            onClick={onClose}
+            className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700"
+          >
             Đóng
           </button>
           {isAdmin && (
-            <button onClick={handleSave} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+            <button
+              onClick={onSubmit}
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+            >
               Lưu
             </button>
           )}
@@ -945,7 +1328,6 @@ const DeviceModal = ({
   );
 };
 
-/** ===== Modal hiện danh sách user đang dùng thiết bị + trả máy ===== */
 const ActiveUsersModal = ({
   device,
   users,
@@ -956,11 +1338,9 @@ const ActiveUsersModal = ({
   isAdmin,
 }) => {
   const total = users?.length || 0;
-
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
       <div className="bg-white rounded-2xl shadow-xl w-[680px] max-w-[95vw]">
-        {/* Header */}
         <div className="px-5 py-4 border-b flex items-center justify-between">
           <div>
             <h3 className="text-lg font-semibold">
@@ -976,7 +1356,6 @@ const ActiveUsersModal = ({
               <button
                 onClick={onOpenAssign}
                 className="px-3.5 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition"
-                title="Gán thêm người dùng"
               >
                 + Gán người dùng
               </button>
@@ -989,14 +1368,14 @@ const ActiveUsersModal = ({
             </button>
           </div>
         </div>
-
-        {/* Body */}
         <div className="p-5">
           {loading ? (
             <div className="py-10 text-center text-gray-600">Đang tải...</div>
           ) : total === 0 ? (
             <div className="py-10 text-center">
-              <div className="text-gray-500 mb-4">Chưa có ai đang dùng thiết bị này.</div>
+              <div className="text-gray-500 mb-4">
+                Chưa có ai đang dùng thiết bị này.
+              </div>
               {isAdmin && (
                 <button
                   onClick={onOpenAssign}
@@ -1016,7 +1395,9 @@ const ActiveUsersModal = ({
                   <div className="min-w-0">
                     <div className="font-medium truncate">
                       {row.User?.username || row.username}{" "}
-                      <span className="text-gray-500">({row.User?.email_user || row.email_user})</span>
+                      <span className="text-gray-500">
+                        ({row.User?.email_user || row.email_user})
+                      </span>
                     </div>
                     <div className="text-sm text-gray-500 mt-0.5">
                       Bắt đầu: {formatDateDisplay(row.start_time)}
@@ -1041,22 +1422,29 @@ const ActiveUsersModal = ({
   );
 };
 
-/** ===== Modal gán user vào thiết bị ===== */
-const AssignUserModal = ({ device, usersOptions, onClose, onAssign, isAdmin }) => {
+const AssignUserModal = ({
+  device,
+  usersOptions,
+  onClose,
+  onAssign,
+  isAdmin,
+}) => {
   const [userId, setUserId] = useState("");
-
   return (
     <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
       <div className="bg-white rounded shadow-lg w-[520px] max-w-[95vw] p-5">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold">
-            Thêm người dùng vào thiết bị #{device?.id_devices} – {device?.name_devices}
+            Thêm người dùng vào thiết bị #{device?.id_devices} –{" "}
+            {device?.name_devices}
           </h3>
-          <button onClick={onClose} className="px-3 py-1 rounded bg-gray-600 text-white">
+          <button
+            onClick={onClose}
+            className="px-3 py-1 rounded bg-gray-600 text-white"
+          >
             Đóng
           </button>
         </div>
-
         <div className="space-y-3">
           <SearchableSelect
             value={userId}
@@ -1066,14 +1454,19 @@ const AssignUserModal = ({ device, usersOptions, onClose, onAssign, isAdmin }) =
             disabled={!isAdmin}
           />
           <div className="flex justify-end gap-2">
-            <button onClick={onClose} className="px-4 py-2 rounded bg-gray-600 text-white hover:bg-gray-700">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded bg-gray-600 text-white hover:bg-gray-700"
+            >
               Hủy
             </button>
             <button
               onClick={() => onAssign(userId, device.id_devices)}
               disabled={!isAdmin || !userId}
               className={`px-4 py-2 rounded text-white ${
-                !isAdmin || !userId ? "bg-green-300" : "bg-green-600 hover:bg-green-700"
+                !isAdmin || !userId
+                  ? "bg-green-300"
+                  : "bg-green-600 hover:bg-green-700"
               }`}
             >
               Gán người dùng

@@ -102,6 +102,7 @@ const getSignature = async (req, res) => {
   }
 };
 
+/** Trả file chữ ký hoặc ticket.png nếu không có */
 const getSignatureFile = async (req, res) => {
   try {
     const { id_users } = req.params;
@@ -112,17 +113,21 @@ const getSignatureFile = async (req, res) => {
 
     let abs = null;
 
-    // 1) Ưu tiên đường dẫn trong DB nếu tồn tại file
+    // 1️⃣ Ưu tiên ảnh lưu trong DB
     if (user.signature_image) {
       const candidate = resolveAbs(user.signature_image);
       if (fs.existsSync(candidate)) abs = candidate;
     }
 
-    // 2) Nếu không có/không tồn tại → tìm theo mẫu <id>.<ext>
+    // 2️⃣ Nếu không tồn tại file trong DB → thử <id>.<ext>
     if (!abs) abs = findExistingSignaturePathAbs(id_users);
 
-    // 3) Nếu vẫn không có → 404 (trường hợp file mặc định cũng không tồn tại)
-    if (!fs.existsSync(abs)) return res.status(404).send("Signature not found");
+    // 3️⃣ Nếu vẫn không có → fallback ticket.png mặc định
+    if (!fs.existsSync(abs)) {
+      const fallback = resolveAbs(DEFAULT_SIGNATURE_REL);
+      if (fs.existsSync(fallback)) abs = fallback;
+      else return res.status(404).send("Default signature not found");
+    }
 
     res.set("Cache-Control", "no-store");
     return res.sendFile(abs);
@@ -131,6 +136,7 @@ const getSignatureFile = async (req, res) => {
     return res.status(500).send("Error reading signature");
   }
 };
+
 
 /** KÝ TAY: luôn ghi đè <id_users>.png và xoá mọi biến thể trước đó */
 const saveDrawnSignature = async (req, res) => {

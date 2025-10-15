@@ -6,3 +6,5 @@ xuất hàm ra để sử dụng bên thu mục controller.
 
 -Fontend
 + unitls Là nơi chứa những xưt lý fontend
+
+npm install jspdf jspdf-autotable xlsx
