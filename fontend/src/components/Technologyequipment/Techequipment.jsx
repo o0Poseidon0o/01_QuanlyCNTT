@@ -461,22 +461,28 @@ const TechEquipment = () => {
       alert("Không có dữ liệu để xuất Excel.");
       return;
     }
-    const data = rows.map((d) => ({
-      "ID Thiết bị": d.id_devices,
-      "Loại thiết bị": d?.Devicetype?.device_type || "",
-      "Tên thiết bị": d.name_devices,
-      CPU: d?.Cpu?.name_cpu || "",
-      RAM: d?.Ram?.name_ram || "",
-      "Ổ cứng": d?.Memory
-        ? `${d.Memory.memory_type} ${d.Memory.size_memory}`
-        : "",
-      "Màn hình": d?.Screen
-        ? `${d.Screen.name_screen} ${d.Screen.size_screen}`
-        : "",
-      "Hệ điều hành": d?.Operationsystem?.name_operationsystem || "",
-      "Ngày mua": formatDateDisplay(d.date_buydevices),
-      "Ngày bảo hành": formatDateDisplay(d.date_warranty),
-    }));
+    const data = rows.map((d) => {
+      const users = activeUsersMap[String(d.id_devices)] || [];
+      const names = users.map((u) => u?.username).filter(Boolean);
+      return {
+        "ID Thiết bị": d.id_devices,
+        "Loại thiết bị": d?.Devicetype?.device_type || "",
+        "Tên thiết bị": d.name_devices,
+        "Người dùng (đang dùng)": names.join(", "),
+        "Số người dùng": names.length,
+        CPU: d?.Cpu?.name_cpu || "",
+        RAM: d?.Ram?.name_ram || "",
+        "Ổ cứng": d?.Memory
+          ? `${d.Memory.memory_type} ${d.Memory.size_memory}`
+          : "",
+        "Màn hình": d?.Screen
+          ? `${d.Screen.name_screen} ${d.Screen.size_screen}`
+          : "",
+        "Hệ điều hành": d?.Operationsystem?.name_operationsystem || "",
+        "Ngày mua": formatDateDisplay(d.date_buydevices),
+        "Ngày bảo hành": formatDateDisplay(d.date_warranty),
+      };
+    });
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Thông tin thiết bị");
@@ -537,6 +543,8 @@ const TechEquipment = () => {
       { header: "ID", dataKey: "id" },
       { header: "Loại thiết bị", dataKey: "devicetype" },
       { header: "Tên thiết bị", dataKey: "name" },
+      { header: "Người dùng (đang dùng)", dataKey: "users" },        // NEW
+      { header: "SL", dataKey: "userCount" },                        // NEW
       { header: "CPU", dataKey: "cpu" },
       { header: "RAM", dataKey: "ram" },
       { header: "Ổ cứng", dataKey: "memory" },
@@ -546,22 +554,28 @@ const TechEquipment = () => {
       { header: "Ngày bảo hành", dataKey: "warranty" },
     ];
 
-    const data = rows.map((d) => ({
-      id: d.id_devices ?? "",
-      devicetype: d?.Devicetype?.device_type ?? "",
-      name: d?.name_devices ?? "",
-      cpu: d?.Cpu?.name_cpu ?? "",
-      ram: d?.Ram?.name_ram ?? "",
-      memory: d?.Memory
-        ? `${d.Memory.memory_type} ${d.Memory.size_memory}`
-        : "",
-      screen: d?.Screen
-        ? `${d.Screen.name_screen} ${d.Screen.size_screen}`
-        : "",
-      os: d?.Operationsystem?.name_operationsystem ?? "",
-      buy: formatDateDisplay(d.date_buydevices),
-      warranty: formatDateDisplay(d.date_warranty),
-    }));
+    const data = rows.map((d) => {
+      const users = activeUsersMap[String(d.id_devices)] || [];
+      const names = users.map((u) => u?.username).filter(Boolean);
+      return {
+        id: d.id_devices ?? "",
+        devicetype: d?.Devicetype?.device_type ?? "",
+        name: d?.name_devices ?? "",
+        users: names.join(", "),
+        userCount: names.length,
+        cpu: d?.Cpu?.name_cpu ?? "",
+        ram: d?.Ram?.name_ram ?? "",
+        memory: d?.Memory
+          ? `${d.Memory.memory_type} ${d.Memory.size_memory}`
+          : "",
+        screen: d?.Screen
+          ? `${d.Screen.name_screen} ${d.Screen.size_screen}`
+          : "",
+        os: d?.Operationsystem?.name_operationsystem ?? "",
+        buy: formatDateDisplay(d.date_buydevices),
+        warranty: formatDateDisplay(d.date_warranty),
+      };
+    });
 
     autoTable(doc, {
       startY: topY + LOGO_H + 6,
@@ -583,10 +597,12 @@ const TechEquipment = () => {
       },
       columnStyles: {
         id: { cellWidth: 18 },
-        devicetype: { cellWidth: 40 },
-        name: { cellWidth: 70 },
-        cpu: { cellWidth: 35 },
-        ram: { cellWidth: 28 },
+        devicetype: { cellWidth: 38 },
+        name: { cellWidth: 40 },
+        users: { cellWidth: 60 },          // width cho danh sách người dùng
+        userCount: { cellWidth: 12, halign: "center" },
+        cpu: { cellWidth: 32 },
+        ram: { cellWidth: 26 },
         memory: { cellWidth: 40 },
         screen: { cellWidth: 38 },
         os: { cellWidth: 40 },
