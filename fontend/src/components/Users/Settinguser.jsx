@@ -1,18 +1,32 @@
+// src/components/Users/SettingUser.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "../../lib/httpClient";
 
+/* ================== CONFIG ================== */
 const API_BASE =
   process.env.NODE_ENV === "production" ? "/api" : "http://localhost:5000/api";
 
-/**
- * SettingUser.jsx — tối ưu & thêm:
- *  - Live search + gợi ý ID/tên khi gõ
- *  - Sửa avatar trong modal
- *  - Cache-busting avatar
- *  - Sắp xếp tăng/giảm
- */
+/* ================== THEME (tự theo hệ thống) ==================
+   - Không lưu localStorage -> nếu người dùng đổi Chrome light/dark là áp dụng ngay
+   - Gắn class "dark" vào <html> để Tailwind dark: hoạt động
+*/
+function useSystemTheme() {
+  useEffect(() => {
+    const mm = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      if (mm.matches) document.documentElement.classList.add("dark");
+      else document.documentElement.classList.remove("dark");
+    };
+    apply(); // áp dụng ngay
+    mm.addEventListener?.("change", apply);
+    return () => mm.removeEventListener?.("change", apply);
+  }, []);
+}
 
+/* ================== COMPONENT ================== */
 const SettingUser = () => {
+  useSystemTheme();
+
   const [users, setUsers] = useState([]);
   const [allUsers, setAllUsers] = useState([]); // cache toàn bộ để gợi ý
   const [departments, setDepartments] = useState([]);
@@ -95,7 +109,11 @@ const SettingUser = () => {
           const response = await axios.get(`${API_BASE}/users/search`, {
             params: { username: q, id_users: q },
           });
-          setUsers(Array.isArray(response.data) ? response.data : (response.data.users || []));
+          setUsers(
+            Array.isArray(response.data)
+              ? response.data
+              : response.data.users || []
+          );
         } else {
           await fetchUsers();
         }
@@ -123,14 +141,17 @@ const SettingUser = () => {
     });
 
     if (isNumeric) {
-      // sắp theo ID tăng dần
       filtered.sort((a, b) => Number(a.id_users) - Number(b.id_users));
     } else {
-      // sắp theo tên A→Z
-      filtered.sort((a, b) => String(a.username || "").localeCompare(String(b.username || ""), "vi"));
+      filtered.sort((a, b) =>
+        String(a.username || "").localeCompare(
+          String(b.username || ""),
+          "vi",
+        )
+      );
     }
 
-    return filtered.slice(0, 8); // giới hạn 8 gợi ý
+    return filtered.slice(0, 8);
   }, [searchTerm, allUsers]);
 
   // Đóng gợi ý khi click ra ngoài
@@ -162,10 +183,8 @@ const SettingUser = () => {
       e.preventDefault();
       const item = suggestions[activeIdx];
       if (item) {
-        // đặt searchTerm = ID để lọc chính xác
         setSearchTerm(String(item.id_users));
         setSuggestOpen(false);
-        // focus lại input
         searchInputRef.current?.blur();
         searchInputRef.current?.focus();
       }
@@ -239,7 +258,7 @@ const SettingUser = () => {
     });
   };
 
-  // Sắp xếp (đặt trước mọi return để không vi phạm rules-of-hooks)
+  // Sắp xếp
   const sortedUsers = useMemo(() => {
     const arr = [...(users || [])];
     const dir = sortDir === "desc" ? -1 : 1;
@@ -259,7 +278,7 @@ const SettingUser = () => {
     return arr;
   }, [users, sortField, sortDir]);
 
-  // Cập nhật người dùng (trường + avatar nếu có)
+  // Cập nhật người dùng
   const updateUser = async () => {
     if (!editingUser) return;
     setBusy(true);
@@ -298,22 +317,31 @@ const SettingUser = () => {
     }
   };
 
+  /* ================== RENDER ================== */
   if (loading) {
-    return <div>Loading...</div>;
+    return (
+      <div className="w-full mt-8">
+        <div className="animate-pulse space-y-4">
+          <div className="h-6 w-64 rounded bg-gray-200 dark:bg-slate-700" />
+          <div className="h-10 w-full rounded bg-gray-200 dark:bg-slate-700" />
+          <div className="h-64 w-full rounded bg-gray-200 dark:bg-slate-700" />
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="w-full mt-8">
-      <p className="text-xl pb-3 flex items-center">
-        <i className="fas fa-list mr-3"></i> Danh sách nhân viên
-      </p>
+    <div className="w-full mt-6 text-gray-800 dark:text-gray-100">
+      <div className="mb-4 flex items-center gap-2">
+        <span className="text-xl font-semibold">Danh sách nhân viên</span>
+        <span className="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-slate-700 border border-gray-200 dark:border-slate-600">
+          {sortedUsers.length} User
+        </span>
+      </div>
 
       {/* Ô tìm kiếm (live + gợi ý) */}
       <div className="mb-4" ref={searchWrapRef}>
-        <div className="relative flex w-full flex-wrap items-stretch">
-          <span className="z-10 h-full leading-snug font-normal text-center text-blueGray-300 absolute bg-transparent rounded text-base items-center justify-center w-8 pl-3 py-3">
-            <i className="fas fa-search"></i>
-          </span>
+        <div className="relative flex w-full items-stretch">
           <input
             ref={searchInputRef}
             type="text"
@@ -331,28 +359,36 @@ const SettingUser = () => {
               }
             }}
             onKeyDown={handleSearchKeyDown}
-            className="border-0 px-3 py-3 placeholder-blueGray-300 text-blueGray-600 relative bg-white rounded text-sm shadow outline-none focus:outline-none focus:ring w-full pl-10"
+            className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 pr-10 outline-none ring-2 ring-transparent focus:ring-blue-500/30"
           />
+          <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 opacity-60">
+            <i className="fas fa-search" />
+          </div>
 
           {/* Dropdown gợi ý */}
           {suggestOpen && suggestions.length > 0 && (
-            <div className="absolute top-full left-0 w-full mt-1 bg-white border rounded shadow z-50 max-h-72 overflow-auto">
+            <div className="absolute top-full left-0 w-full mt-1 rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-lg z-50 max-h-72 overflow-auto">
               {suggestions.map((u, idx) => {
                 const isActive = idx === activeIdx;
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={u.id_users}
-                    className={`px-3 py-2 cursor-pointer ${isActive ? "bg-blue-50" : "hover:bg-gray-50"}`}
+                    className={`w-full text-left px-3 py-2 ${isActive ? "bg-blue-50 dark:bg-slate-700/60" : "hover:bg-gray-50 dark:hover:bg-slate-700/40"}`}
                     onMouseEnter={() => setActiveIdx(idx)}
                     onMouseDown={(e) => {
                       e.preventDefault();
-                      setSearchTerm(String(u.id_users)); // chọn ID để lọc chính xác
+                      setSearchTerm(String(u.id_users));
                       setSuggestOpen(false);
                     }}
                   >
-                    <div className="font-medium">{u.id_users} — {u.username}</div>
-                    <div className="text-xs text-gray-500 line-clamp-1">{u.email_user}</div>
-                  </div>
+                    <div className="font-medium">
+                      {u.id_users} — {u.username}
+                    </div>
+                    <div className="text-xs opacity-70 line-clamp-1">
+                      {u.email_user}
+                    </div>
+                  </button>
                 );
               })}
             </div>
@@ -361,12 +397,12 @@ const SettingUser = () => {
       </div>
 
       {/* Bộ điều khiển sắp xếp */}
-      <div className="mb-4 flex items-center gap-2">
-        <label className="text-sm text-gray-600">Sắp xếp theo:</label>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <label className="text-sm opacity-80">Sắp xếp theo:</label>
         <select
           value={sortField}
           onChange={(e) => setSortField(e.target.value)}
-          className="px-3 py-2 border rounded"
+          className="px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800"
         >
           <option value="id_users">Mã (ID)</option>
           <option value="username">Tên</option>
@@ -375,92 +411,109 @@ const SettingUser = () => {
         <button
           type="button"
           onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-          className="px-3 py-2 border rounded"
+          className="px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700"
           title={sortDir === "asc" ? "Đang: Tăng dần (nhỏ → lớn)" : "Đang: Giảm dần (lớn → nhỏ)"}
         >
           {sortDir === "asc" ? "↑ Nhỏ → Lớn" : "↓ Lớn → Nhỏ"}
         </button>
       </div>
 
-      <div className="bg-white overflow-auto">
-        <table className="text-left w-full border-collapse">
-          <thead>
-            <tr>
-              <th className="py-4 px-6">Hình ảnh</th>
-              <th className="py-4 px-6">Số hiệu</th>
-              <th className="py-4 px-6">Họ và tên</th>
-              <th className="py-4 px-6">Email</th>
-              <th className="py-4 px-6">Bộ phận</th>
-              <th className="py-4 px-6">Chức danh</th>
-              <th className="py-4 px-6">Chức năng</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedUsers.map((user) => (
-              <tr key={user.id_users} className="hover:bg-grey-lighter">
-                <td className="py-4 px-6">
-                  <div className="w-12 h-12 sm:w-16 sm:h-16 md:w-20 md:h-20 lg:w-24 lg:h-24 shrink-0">
-                    <img
-                      src={`${API_BASE}/avatars/${user.id_users}?v=${avatarBustKey}`}
-                      alt="Avatar"
-                      loading="lazy"
-                      className="w-full h-full rounded-full object-cover object-center transition-transform duration-300 md:hover:scale-150 border shadow-lg"
-                      onError={(e) => {
-                        e.currentTarget.src = "/default-avatar.jpg";
-                      }}
-                    />
-                  </div>
-                </td>
-                <td className="py-4 px-6">{user.id_users}</td>
-                <td className="py-4 px-6">{user.username}</td>
-                <td className="py-4 px-6">{user.email_user}</td>
-                <td className="py-4 px-6">{user.department_name}</td>
-                <td className="py-4 px-6">{user.role_name}</td>
-                <td className="py-4 px-6">
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => openEditModal(user)}
-                      className={`bg-green-500 w-14 rounded shadow-md text-white ${
-                        currentRole !== "admin" ? "opacity-50 cursor-not-allowed" : ""
-                      }`}
-                      disabled={currentRole !== "admin"}
-                    >
-                      Sửa
-                    </button>
-                    <button
-                      onClick={() => deleteUser(user.id_users)}
-                      className={`bg-red-500 w-14 rounded shadow-md text-white ${
-                        currentRole !== "admin" ? "opacity-50 cursor-not-allowed" : ""
-                      }`}
-                      disabled={currentRole !== "admin"}
-                    >
-                      Xóa
-                    </button>
-                  </div>
-                </td>
+      {/* Bảng danh sách */}
+      <div className="rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/50 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left">
+            <thead className="bg-gray-50 dark:bg-slate-800 text-sm">
+              <tr className="[&>th]:py-3 [&>th]:px-4 [&>th]:font-semibold">
+                <th>Hình ảnh</th>
+                <th>Số hiệu</th>
+                <th>Họ và tên</th>
+                <th>Email</th>
+                <th>Bộ phận</th>
+                <th>Chức danh</th>
+                <th>Chức năng</th>
               </tr>
-            ))}
-            {sortedUsers.length === 0 && (
-              <tr>
-                <td colSpan={7} className="py-6 px-6 text-center text-gray-500">
-                  Không có kết quả phù hợp
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+              {sortedUsers.map((user) => (
+                <tr key={user.id_users} className="hover:bg-gray-50 dark:hover:bg-slate-800/60 transition-colors">
+                  <td className="py-3 px-4">
+                    <div className="w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 shrink-0">
+                      <img
+                        src={`${API_BASE}/avatars/${user.id_users}?v=${avatarBustKey}`}
+                        alt="Avatar"
+                        loading="lazy"
+                        className="w-full h-full rounded-full object-cover object-center border border-gray-200 dark:border-slate-700 shadow-sm"
+                        onError={(e) => {
+                          e.currentTarget.src = "/default-avatar.jpg";
+                        }}
+                      />
+                    </div>
+                  </td>
+                  <td className="py-3 px-4">{user.id_users}</td>
+                  <td className="py-3 px-4">{user.username}</td>
+                  <td className="py-3 px-4">{user.email_user}</td>
+                  <td className="py-3 px-4">{user.department_name}</td>
+                  <td className="py-3 px-4">{user.role_name}</td>
+                  <td className="py-3 px-4">
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => openEditModal(user)}
+                        className={`px-3 py-1.5 rounded-lg text-sm text-white shadow-sm transition ${
+                          currentRole !== "admin"
+                            ? "bg-green-400/60 cursor-not-allowed"
+                            : "bg-green-500 hover:bg-green-600"
+                        }`}
+                        disabled={currentRole !== "admin"}
+                      >
+                        Sửa
+                      </button>
+                      <button
+                        onClick={() => deleteUser(user.id_users)}
+                        className={`px-3 py-1.5 rounded-lg text-sm text-white shadow-sm transition ${
+                          currentRole !== "admin"
+                            ? "bg-red-400/60 cursor-not-allowed"
+                            : "bg-red-500 hover:bg-red-600"
+                        }`}
+                        disabled={currentRole !== "admin"}
+                      >
+                        Xóa
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {sortedUsers.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-6 px-6 text-center opacity-70">
+                    Không có kết quả phù hợp
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Modal chỉnh sửa */}
       {isEditModalOpen && (
-        <div className="fixed top-0 left-0 w-full h-full bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded shadow-md w-[520px] max-w-full">
-            <h2 className="text-xl mb-4">Chỉnh sửa người dùng</h2>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-[1px] flex items-center justify-center z-50 p-3">
+          <div className="w-full max-w-[560px] rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl">
+            <div className="px-6 py-4 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Chỉnh sửa người dùng</h2>
+              <button
+                onClick={closeEditModal}
+                className="px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800"
+                disabled={busy}
+                aria-label="Đóng"
+              >
+                ✕
+              </button>
+            </div>
 
-            {/* Avatar */}
-            <div className="mb-5 flex items-start gap-4">
-              <div>
-                <div className="w-24 h-24 rounded-full overflow-hidden border shadow">
+            <div className="p-6 space-y-5">
+              {/* Avatar */}
+              <div className="flex items-start gap-4">
+                <div className="w-24 h-24 rounded-full overflow-hidden border border-gray-200 dark:border-slate-700 shadow">
                   <img
                     src={avatarPreview || "/default-avatar.jpg"}
                     alt="avatar preview"
@@ -470,105 +523,108 @@ const SettingUser = () => {
                     }}
                   />
                 </div>
+                <div className="flex-1">
+                  <label className="block mb-2 font-medium">Đổi avatar</label>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleAvatarChange}
+                    className="block w-full text-sm file:mr-3 file:rounded-md file:border file:border-gray-300 dark:file:border-slate-700 file:px-3 file:py-1.5 file:bg-white dark:file:bg-slate-800 file:text-sm file:hover:bg-gray-50 dark:file:hover:bg-slate-700"
+                  />
+                  <p className="text-xs opacity-70 mt-1">
+                    Cho phép .jpg/.jpeg/.png, tên file sẽ tự đổi theo ID.
+                  </p>
+                </div>
               </div>
-              <div className="flex-1">
-                <label className="block mb-2 font-medium">Đổi avatar</label>
+
+              {/* Form */}
+              <div>
+                <label className="block mb-1.5">Họ và tên</label>
                 <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleAvatarChange}
-                  className="block w-full text-sm"
+                  type="text"
+                  name="username"
+                  value={formData.username}
+                  onChange={handleInputChange}
+                  className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 outline-none ring-2 ring-transparent focus:ring-blue-500/30"
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  Cho phép .jpg/.jpeg/.png, tên file sẽ tự đổi theo ID.
-                </p>
               </div>
-            </div>
 
-            {/* Thông tin cơ bản */}
-            <div className="mb-4">
-              <label className="block mb-2">Họ và tên</label>
-              <input
-                type="text"
-                name="username"
-                value={formData.username}
-                onChange={handleInputChange}
-                className="w-full px-4 py-2 border rounded"
-              />
-            </div>
-            <div className="mb-4">
-              <label className="block mb-2">Email</label>
-              <input
-                type="email"
-                name="email_user"
-                value={formData.email_user}
-                onChange={handleInputChange}
-                className="w-full px-4 py-2 border rounded"
-              />
-            </div>
-            <div className="mb-4 grid grid-cols-2 gap-3">
               <div>
-                <label className="block mb-2">Bộ phận</label>
-                <select
-                  className="w-full px-4 py-2 border rounded"
-                  name="id_departments"
-                  value={formData.id_departments}
+                <label className="block mb-1.5">Email</label>
+                <input
+                  type="email"
+                  name="email_user"
+                  value={formData.email_user}
                   onChange={handleInputChange}
-                >
-                  <option value="">Chọn bộ phận</option>
-                  {departments.map((department) => (
-                    <option key={department.id_departments} value={department.id_departments}>
-                      {department.department_name}
-                    </option>
-                  ))}
-                </select>
+                  className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 outline-none ring-2 ring-transparent focus:ring-blue-500/30"
+                />
               </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block mb-1.5">Bộ phận</label>
+                  <select
+                    className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2"
+                    name="id_departments"
+                    value={formData.id_departments}
+                    onChange={handleInputChange}
+                  >
+                    <option value="">Chọn bộ phận</option>
+                    {departments.map((department) => (
+                      <option key={department.id_departments} value={department.id_departments}>
+                        {department.department_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block mb-1.5">Chức danh</label>
+                  <select
+                    className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2"
+                    name="id_roles"
+                    value={formData.id_roles}
+                    onChange={handleInputChange}
+                  >
+                    <option value="">Chọn chức danh</option>
+                    {roles.map((role) => (
+                      <option key={role.id_roles} value={role.id_roles}>
+                        {role.name_role}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               <div>
-                <label className="block mb-2">Chức danh</label>
-                <select
-                  className="w-full px-4 py-2 border rounded"
-                  name="id_roles"
-                  value={formData.id_roles}
+                <label className="block mb-1.5">Mật khẩu</label>
+                <input
+                  type="password"
+                  name="password_user"
+                  value={formData.password_user}
                   onChange={handleInputChange}
-                >
-                  <option value="">Chọn chức danh</option>
-                  {roles.map((role) => (
-                    <option key={role.id_roles} value={role.id_roles}>
-                      {role.name_role}
-                    </option>
-                  ))}
-                </select>
+                  className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 outline-none ring-2 ring-transparent focus:ring-blue-500/30"
+                  placeholder="Để trống nếu không đổi"
+                />
               </div>
-            </div>
-            <div className="mb-6">
-              <label className="block mb-2">Mật khẩu</label>
-              <input
-                type="password"
-                name="password_user"
-                value={formData.password_user}
-                onChange={handleInputChange}
-                className="w-full px-4 py-2 border rounded"
-                placeholder="Để trống nếu không đổi"
-              />
+
+              {/* Messages */}
+              {errorMsg && <p className="text-red-500 text-sm">{errorMsg}</p>}
+              {okMsg && <p className="text-green-500 text-sm">{okMsg}</p>}
             </div>
 
-            {/* Messages */}
-            {errorMsg && <p className="text-red-600 text-sm mb-3">{errorMsg}</p>}
-            {okMsg && <p className="text-green-600 text-sm mb-3">{okMsg}</p>}
-
-            <div className="flex justify-between">
+            <div className="px-6 py-4 border-t border-gray-100 dark:border-slate-800 flex justify-between">
               <button
                 onClick={closeEditModal}
-                className="px-4 py-2 bg-gray-500 text-white rounded"
+                className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 dark:bg-slate-700 dark:hover:bg-slate-600"
                 disabled={busy}
               >
                 Đóng
               </button>
               <button
                 onClick={updateUser}
-                className={`px-4 py-2 text-white rounded ${
-                  busy ? "bg-blue-300" : "bg-blue-500 hover:bg-blue-600"
+                className={`px-4 py-2 rounded-lg text-white ${
+                  busy ? "bg-blue-400" : "bg-blue-600 hover:bg-blue-700"
                 }`}
                 disabled={busy}
               >

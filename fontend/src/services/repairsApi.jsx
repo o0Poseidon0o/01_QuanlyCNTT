@@ -155,17 +155,36 @@ const preparePayload = (payload = {}) => {
  * API gọi từ FE
  * ===================== */
 
+// Danh sách chung (admin/IT dùng)
 export const listRepairs = async (params = {}) => {
   const res = await axios.get(`${API_BASE}/repairs`, {
     params,
     headers: { "Cache-Control": "no-cache" },
   });
-  const data = Array.isArray(res.data) ? res.data.map(mapTicketFromApi) : res.data;
-  return data;
+  const data = Array.isArray(res.data) ? res.data : res.data?.repairs || [];
+  return data.map(mapTicketFromApi);
+};
+
+// ✅ Danh sách ticket theo user hiện tại (/repairs/user/:id)
+export const listRepairsByUser = async (user_id, params = {}) => {
+  if (!user_id) return [];
+  const res = await axios.get(`${API_BASE}/repairs/user/${user_id}`, {
+    params: {
+      page: params.page ?? 1,
+      limit: params.limit ?? 500,
+      includeCanceled: params.includeCanceled ?? 1,
+      _ts: Date.now(),
+    },
+    headers: { "Cache-Control": "no-cache" },
+  });
+  const data = Array.isArray(res.data) ? res.data : res.data?.repairs || [];
+  return data.map(mapTicketFromApi);
 };
 
 export const getRepair = async (id) => {
-  const res = await axios.get(`${API_BASE}/repairs/${id}`);
+  const res = await axios.get(`${API_BASE}/repairs/${id}`, {
+    headers: { "Cache-Control": "no-cache" },
+  });
   const data = res.data || {};
   const ticket = data.ticket ? mapTicketFromApi(data.ticket) : null;
   const detail = data.detail ? mapTicketFromApi(data.detail) : null;
@@ -174,26 +193,38 @@ export const getRepair = async (id) => {
 };
 
 export const createRepair = async (payload) => {
-  const res = await axios.post(`${API_BASE}/repairs`, preparePayload(payload));
-  return res.data;
-};
-
-export const updateStatus = async (id, payload) => {
-  const res = await axios.patch(`${API_BASE}/repairs/${id}/status`, {
-    ...payload,
-    new_status: toBackendStatus(payload?.new_status),
+  const res = await axios.post(`${API_BASE}/repairs`, preparePayload(payload), {
+    headers: { "Cache-Control": "no-cache" },
   });
   return res.data;
 };
 
+export const updateStatus = async (id, payload) => {
+  const res = await axios.patch(
+    `${API_BASE}/repairs/${id}/status`,
+    {
+      ...payload,
+      new_status: toBackendStatus(payload?.new_status),
+    },
+    { headers: { "Cache-Control": "no-cache" } }
+  );
+  return res.data;
+};
+
 export const upsertDetail = async (id, payload) => {
-  const res = await axios.put(`${API_BASE}/repairs/${id}/detail`, preparePayload(payload));
+  const res = await axios.put(
+    `${API_BASE}/repairs/${id}/detail`,
+    preparePayload(payload),
+    { headers: { "Cache-Control": "no-cache" } }
+  );
   return res.data;
 };
 
 export const addPart = async (id, partOrArray) => {
   const list = Array.isArray(partOrArray) ? partOrArray : [partOrArray];
-  const res = await axios.post(`${API_BASE}/repairs/${id}/parts`, list);
+  const res = await axios.post(`${API_BASE}/repairs/${id}/parts`, list, {
+    headers: { "Cache-Control": "no-cache" },
+  });
   return res.data;
 };
 
@@ -202,7 +233,7 @@ export const uploadFiles = async (id, files, uploaded_by) => {
   for (const f of files) fd.append("files", f);
   if (uploaded_by) fd.append("uploaded_by", uploaded_by);
   const res = await axios.post(`${API_BASE}/repairs/${id}/files`, fd, {
-    headers: { "Content-Type": "multipart/form-data" },
+    headers: { "Content-Type": "multipart/form-data", "Cache-Control": "no-cache" },
   });
   return res.data;
 };
@@ -217,7 +248,9 @@ export const getSummaryStats = async () => {
 
 // ⚙️ dropdown người xử lý & nhà cung cấp
 export const getAssigneeVendorOptions = async () => {
-  const res = await axios.get(`${API_BASE}/repairs/options`);
+  const res = await axios.get(`${API_BASE}/repairs/options`, {
+    headers: { "Cache-Control": "no-cache" },
+  });
   return res.data; // { users: [...], vendors: [...] }
 };
 
@@ -266,5 +299,5 @@ export const confirmRepair = async (id, user_id, note = "User confirmed completi
   }
 };
 
-// ✅ Alias để khớp import hiện tại trong ProfileUsers.jsx
+// ✅ Alias để khớp import hiện tại ở FE
 export const confirmComplete = (id, user_id, note) => confirmRepair(id, user_id, note);

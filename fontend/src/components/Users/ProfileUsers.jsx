@@ -3,10 +3,11 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "../../lib/httpClient";
 import {
   createRepair,
-  listRepairs,
+  // listRepairs, // ⛔️ bỏ, dùng endpoint /repairs/user/:id
   confirmComplete,
 } from "../../services/repairsApi";
 
+/* ================== CONFIG ================== */
 const API_BASE =
   process.env.NODE_ENV === "production" ? "/api" : "http://localhost:5000/api";
 
@@ -15,7 +16,112 @@ const DEFAULT_AVT =
 
 const PAGE_SIZE_DEFAULT = 8;
 
+/* ================== THEME HOOK ================== */
+function useTheme() {
+  const [theme, setTheme] = useState(() => {
+    if (typeof document !== "undefined") {
+      const saved = localStorage.getItem("theme");
+      if (saved === "light" || saved === "dark") return saved;
+    }
+    if (typeof window !== "undefined" && window.matchMedia) {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+    }
+    return "light";
+  });
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "dark") root.classList.add("dark");
+    else root.classList.remove("dark");
+    localStorage.setItem("theme", theme);
+  }, [theme]);
+
+  useEffect(() => {
+    const mql = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const onChange = (e) => {
+      const saved = localStorage.getItem("theme");
+      if (!saved) setTheme(e.matches ? "dark" : "light");
+    };
+    mql?.addEventListener?.("change", onChange);
+    return () => mql?.removeEventListener?.("change", onChange);
+  }, []);
+
+  const toggle = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+  return { theme, toggle };
+}
+
+/* ================== STYLE TOKENS ================== */
+const FOCUS =
+  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500";
+const TRANS = "transition-colors duration-150";
+const RING =
+  "ring-1 ring-neutral-200 dark:ring-neutral-700 group-hover:ring-neutral-300 dark:group-hover:ring-neutral-600";
+
+const STYLES = {
+  page:
+    "min-h-screen p-6 mt-10 bg-gradient-to-b from-sky-50 via-white to-white " +
+    "dark:from-[#0b1220] dark:via-[#0b1220] dark:to-[#0b1220]",
+  panel:
+    "bg-white shadow-md border border-sky-100 rounded-xl " +
+    "dark:bg-neutral-800/70 dark:border-neutral-700 backdrop-blur",
+  panelHead:
+    "p-4 border-b border-sky-100/80 bg-white/80 backdrop-blur flex items-center justify-between " +
+    "dark:border-neutral-700 dark:bg-neutral-800/60",
+  hTitle: "text-sm font-semibold text-neutral-900 dark:text-neutral-50",
+  subText: "text-xs text-neutral-600 dark:text-neutral-300",
+  text: "text-sm text-neutral-900 dark:text-neutral-50",
+  textMute: "text-[11px] text-neutral-500 dark:text-neutral-300",
+  input:
+    `text-sm px-3 py-2 border rounded-lg w/full ` +
+    `border-neutral-300 bg-white text-neutral-900 placeholder-neutral-400 ` +
+    `dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-50 ${FOCUS} ${TRANS}`.replace(
+      "w/full",
+      "w-full"
+    ),
+  select:
+    `text-sm px-3 py-2 border rounded-lg ` +
+    `border-neutral-300 bg-white text-neutral-900 ` +
+    `dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-50 ${FOCUS} ${TRANS}`,
+  btn:
+    `px-3 py-2 rounded-lg border border-neutral-200 bg-white hover:bg-sky-50 ` +
+    `text-sm text-neutral-700 shadow-sm ${FOCUS} ${TRANS} ` +
+    `dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100 dark:hover:bg-neutral-700`,
+  btnPrimary:
+    `px-4 py-2 rounded-lg text-white font-semibold bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 ${FOCUS} ${TRANS}`,
+  btnSoftIndigo:
+    `text-xs px-2.5 py-1.5 rounded-lg border border-sky-200 text-sky-700 hover:bg-sky-50 ` +
+    `${FOCUS} ${TRANS} dark:border-sky-700/40 dark:text-sky-300 dark:hover:bg-sky-900/20`,
+  tableWrap: "overflow-x-auto max-w-full",
+  tableHead:
+    "bg-gradient-to-b from-sky-100/80 to-blue-50/80 text-neutral-800 " +
+    "dark:from-neutral-800/90 dark:to-neutral-800/90 dark:text-neutral-100 sticky top-0 z-10",
+  tableTd: "px-3 py-2 text-sm text-neutral-800 dark:text-neutral-50",
+  tableTh: "text-left text-xs font-medium uppercase tracking-wide px-3 py-2",
+  divider: "divide-y divide-sky-100 dark:divide-neutral-700",
+  hoverRow: "hover:bg-sky-50 dark:hover:bg-neutral-700/60",
+  pillBase:
+    "inline-flex items-center px-2.5 py-0.5 rounded-full border text-xs font-semibold",
+};
+
+const VI_SEVERITY = {
+  critical: "Khẩn",
+  high: "Cao",
+  medium: "Trung Bình",
+  low: "Thấp",
+};
+const VI_PRIORITY = {
+  urgent: "Khẩn",
+  high: "Cao",
+  normal: "Bình Thường",
+  low: "Thấp",
+};
+
 const ProfileUsers = () => {
+  // đồng bộ theme theo system
+  useTheme();
+
   const [userId] = useState(
     typeof window !== "undefined" ? localStorage.getItem("id_users") || "" : ""
   );
@@ -35,7 +141,7 @@ const ProfileUsers = () => {
   const [ticketPage, setTicketPage] = useState(1);
   const [ticketPageSize, setTicketPageSize] = useState(PAGE_SIZE_DEFAULT);
 
-  // Tabs khớp repairsApi.js (requested, approved, in_progress, pending_parts, completed, canceled)
+  // Tabs
   const STATUS_TABS = useMemo(
     () => [
       { key: "all", label: "Tất cả" },
@@ -60,6 +166,15 @@ const ProfileUsers = () => {
   const [cpShow, setCpShow] = useState({ nw: false, cf: false });
   const [cpMsg, setCpMsg] = useState({ type: "", text: "" });
   const [cpLoading, setCpLoading] = useState(false);
+
+  // ✅ thêm header x-user-id cho mọi request (backend sẽ đọc đúng user hiện tại)
+  useEffect(() => {
+    if (userId) {
+      try {
+        axios.defaults.headers.common["x-user-id"] = String(userId);
+      } catch {}
+    }
+  }, [userId]);
 
   const validatePassword = (v) => typeof v === "string" && v.trim().length >= 6;
 
@@ -102,18 +217,14 @@ const ProfileUsers = () => {
   // ===== Signature =====
   const [sigMsg, setSigMsg] = useState({ type: "", text: "" });
   const [sigLoading, setSigLoading] = useState(false);
-  const [sigVer, setSigVer] = useState(0); // tăng để buộc reload ảnh
-
+  const [sigVer, setSigVer] = useState(0);
   const [showDrawModal, setShowDrawModal] = useState(false);
   const canvasRef = useRef(null);
   const ctxRef = useRef(null);
   const drawingRef = useRef(false);
   const lastRef = useRef({ x: 0, y: 0 });
-
-  // Dùng để thử reload 1 lần khi ảnh chữ ký lỗi trước khi fallback ticket.png
   const sigImgTriedRef = useRef(false);
 
-  // ✅ Luôn load ảnh chữ ký qua API; backend tự fallback ảnh mặc định
   const signatureUrl = useMemo(() => {
     if (!user?.id_users) return "";
     const bust = `${
@@ -146,17 +257,15 @@ const ProfileUsers = () => {
     try {
       const fd = new FormData();
       fd.append("file", file);
-
-      // Để browser tự set multipart boundary
       const res = await axios.post(
         `${API_BASE}/signatures/upload/${userId}`,
         fd,
         {
           headers: {},
           transformRequest: [
-            (data, headers) => {
-              if (headers && headers["Content-Type"]) delete headers["Content-Type"];
-              return data;
+            (d, h) => {
+              if (h && h["Content-Type"]) delete h["Content-Type"];
+              return d;
             },
           ],
         }
@@ -169,11 +278,14 @@ const ProfileUsers = () => {
           signature_image: stored,
           updated_at: new Date().toISOString(),
         }));
-        sigImgTriedRef.current = false; // reset thử lại khi có ảnh mới
-        setSigVer((v) => v + 1); // ép reload ảnh
+        sigImgTriedRef.current = false;
+        setSigVer((v) => v + 1);
         setSigMsg({ type: "success", text: "Tải chữ ký thành công." });
       } else {
-        setSigMsg({ type: "error", text: "Tải lên không trả về đường dẫn chữ ký." });
+        setSigMsg({
+          type: "error",
+          text: "Tải lên không trả về đường dẫn chữ ký.",
+        });
       }
     } catch (err) {
       setSigMsg({
@@ -236,7 +348,7 @@ const ProfileUsers = () => {
     ctx.scale(dpr, dpr);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    ctx.strokeStyle = "#111827";
+    ctx.strokeStyle = "#0f172a";
     ctx.lineWidth = 2.5;
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, cssW, cssH);
@@ -277,13 +389,12 @@ const ProfileUsers = () => {
     const canvas = canvasRef.current;
     const ctx = ctxRef.current;
     if (!canvas || !ctx) return;
-    // Xoá theo kích thước logic (đã scale dpr)
     const cssW = parseInt(canvas.style.width || "480", 10);
     const cssH = parseInt(canvas.style.height || "180", 10);
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, cssW, cssH);
     ctx.fillStyle = "#ffffff";
-    ctx.strokeStyle = "#111827";
+    ctx.strokeStyle = "#0f172a";
   };
 
   const onSaveDrawing = async () => {
@@ -297,7 +408,6 @@ const ProfileUsers = () => {
 
     try {
       const dataUrl = canvasRef.current.toDataURL("image/png");
-
       let res;
       try {
         res = await axios.post(
@@ -344,7 +454,8 @@ const ProfileUsers = () => {
     String(s || "")
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase();
+      .toLowerCase()
+      .trim();
 
   const deptMap = useMemo(() => {
     const m = {};
@@ -385,36 +496,28 @@ const ProfileUsers = () => {
     );
   }, [user, roleMap]);
 
-  const VI_SEVERITY = {
-    critical: "Khẩn",
-    high: "Cao",
-    medium: "Trung Bình",
-    low: "Thấp",
-  };
-  const VI_PRIORITY = {
-    urgent: "Khẩn",
-    high: "Cao",
-    normal: "Bình Thường",
-    low: "Thấp",
-  };
-
+  // Status pill
   const statusPill = (st, label) => {
     const v = String(st || "").toLowerCase();
     const map = {
-      requested: "text-neutral-700 bg-neutral-100 border-neutral-200",
-      approved: "text-indigo-700 bg-indigo-50 border-indigo-200",
-      in_progress: "text-blue-700 bg-blue-50 border-blue-200",
-      pending_parts: "text-amber-700 bg-amber-50 border-amber-200",
-      completed: "text-emerald-700 bg-emerald-50 border-emerald-200",
-      canceled: "text-red-700 bg-red-50 border-red-200",
+      requested:
+        "text-sky-700 bg-sky-50 border-sky-200 dark:text-sky-300 dark:bg-sky-900/25 dark:border-sky-800",
+      approved:
+        "text-blue-700 bg-blue-50 border-blue-200 dark:text-blue-300 dark:bg-blue-900/25 dark:border-blue-800",
+      in_progress:
+        "text-indigo-700 bg-indigo-50 border-indigo-200 dark:text-indigo-300 dark:bg-indigo-900/25 dark:border-indigo-800",
+      pending_parts:
+        "text-amber-700 bg-amber-50 border-amber-200 dark:text-amber-300 dark:bg-amber-900/25 dark:border-amber-800",
+      completed:
+        "text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-300 dark:bg-emerald-900/25 dark:border-emerald-800",
+      canceled:
+        "text-rose-700 bg-rose-50 border-rose-200 dark:text-rose-300 dark:bg-rose-900/25 dark:border-rose-800",
     };
-    const cls = map[v] || "text-neutral-700 bg-neutral-50 border-neutral-200";
+    const cls =
+      map[v] ||
+      "text-neutral-700 bg-neutral-50 border-neutral-200 dark:text-neutral-200 dark:bg-neutral-800 dark:border-neutral-700";
     const show = label || st || "—";
-    return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full border text-xs font-semibold ${cls}`}>
-        {show}
-      </span>
-    );
+    return <span className={`${STYLES.pillBase} ${cls}`}>{show}</span>;
   };
 
   const pad2 = (n) => String(n).padStart(2, "0");
@@ -457,7 +560,9 @@ const ProfileUsers = () => {
         }
       } catch (e) {
         if (!mounted) return;
-        setError(e?.response?.data?.message || "Lỗi khi tải thông tin người dùng");
+        setError(
+          e?.response?.data?.message || "Lỗi khi tải thông tin người dùng"
+        );
         setUser(null);
       } finally {
         if (mounted) setLoading(false);
@@ -477,7 +582,9 @@ const ProfileUsers = () => {
       try {
         const res = await axios.get(`${API_BASE}/departments/all-departments`);
         if (!mounted) return;
-        setDepartments(Array.isArray(res.data) ? res.data : res.data?.departments || []);
+        setDepartments(
+          Array.isArray(res.data) ? res.data : res.data?.departments || []
+        );
       } catch {
         if (mounted) setDepartments([]);
       }
@@ -542,10 +649,10 @@ const ProfileUsers = () => {
       }
 
       try {
-        const rAssign = await axios.get(`${API_BASE}/assignments/active-by-user/${userId}`, {
-          headers: { "Cache-Control": "no-cache" },
-          params: { t: Date.now() },
-        });
+        const rAssign = await axios.get(
+          `${API_BASE}/assignments/active-by-user/${userId}`,
+          { headers: { "Cache-Control": "no-cache" }, params: { t: Date.now() } }
+        );
         const assigns = Array.isArray(rAssign.data) ? rAssign.data : [];
 
         const assignDevices = assigns
@@ -594,71 +701,90 @@ const ProfileUsers = () => {
     };
   }, [userId]);
 
-  // Fetch my tickets — dùng listRepairs từ repairsApi.js (đã canonical & có *_label)
+  // Fetch my tickets — dùng endpoint backend mới: GET /repairs/user/:id
   const fetchMyTickets = async () => {
     if (!userId) return;
     setTicketsLoading(true);
     setTicketsError("");
     try {
-      // Trả về có thể: mảng tickets hoặc {repairs:[], total,...}
-      const res = await listRepairs({ reported_by: userId, _ts: Date.now() });
-      const rawList = Array.isArray(res) ? res : res?.repairs || [];
+      const res = await axios.get(`${API_BASE}/repairs/user/${userId}`, {
+        params: {
+          page: 1,
+          limit: 500,
+          includeCanceled: 1, // lấy cả "Huỷ" để tab riêng có dữ liệu
+          _ts: Date.now(),
+        },
+        headers: { "Cache-Control": "no-cache" },
+      });
 
-      // Chuẩn hoá field tối thiểu ta dùng
-      const normalized = (rawList || []).map((t) => ({
-        id_repair: t.id_repair ?? t.id ?? t.ticket_id,
-        device_code:
-          t.device_code ??
-          t.id_devices ??
-          t.Device?.id_devices ??
-          t.device?.id_devices ??
-          "",
-        device_name:
-          t.device_name ?? t.Device?.name_devices ?? t.device?.name_devices ?? "",
-        title: t.title ?? t.issue_title ?? "—",
-        issue_description: t.issue_description ?? t.description ?? "",
-        result: t.outcome ?? t.result ?? t.repair_result ?? "-",
-        // status/severity/priority đã canonical trong repairsApi.mapTicketFromApi
-        status: t.status,
-        status_label: t.status_label || t.status,
-        severity: (t.severity || "").toString().toLowerCase(),
-        severity_label: t.severity_label || t.severity,
-        priority: (t.priority || "").toString().toLowerCase(),
-        priority_label: t.priority_label || t.priority,
-        created_at:
-          t.date_reported ?? t.created_at ?? t.createdAt ?? t.created_time,
-        sla_hours: t.sla_hours ?? t.sla ?? null,
-        reporter_name:
-          t.reporter_name ??
-          t.Reporter?.username ??
-          t.created_by_name ??
-          t.reported_by ??
-          "",
-        assignee_name:
-          t.assignee ??
-          t.assignee_name ??
-          t.technician_name ??
-          t.Technician?.username ??
-          "",
-        vendor_name: t.vendor_name ?? t.RepairVendor?.vendor_name ?? "",
-        repair_type: t.repair_type ?? "",
-        total_cost:
-          t.total_cost ??
-          Number(t.labor_cost || 0) +
-            Number(t.parts_cost || 0) +
-            Number(t.other_cost || 0),
-        user_confirmed: t.user_confirmed ?? t.is_user_confirmed ?? null,
-      }));
+      const rawList = Array.isArray(res.data)
+        ? res.data
+        : res?.data?.repairs || [];
+
+      const normalized = (rawList || [])
+        .map((t) => ({
+          id_repair: t.id_repair ?? t.id ?? t.ticket_id,
+          device_code:
+            t.device_code ??
+            t.id_devices ??
+            t.Device?.id_devices ??
+            t.device?.id_devices ??
+            "",
+          device_name:
+            t.device_name ??
+            t.Device?.name_devices ??
+            t.device?.name_devices ??
+            "",
+          title: t.title ?? t.issue_title ?? "—",
+          issue_description: t.issue_description ?? t.description ?? "",
+          result: t.outcome ?? t.result ?? t.repair_result ?? "-",
+          status: t.status,
+          status_label: t.status_label || t.status,
+          severity: (t.severity || "").toString().toLowerCase(),
+          severity_label: t.severity_label || t.severity,
+          priority: (t.priority || "").toString().toLowerCase(),
+          priority_label: t.priority_label || t.priority,
+          created_at:
+            t.date_reported ?? t.created_at ?? t.createdAt ?? t.created_time,
+          sla_hours: t.sla_hours ?? t.sla ?? null,
+          reported_by:
+            t.reported_by ??
+            t.created_by ??
+            t.reporter_id ??
+            t.Reporter?.id_users ??
+            null,
+          reporter_name:
+            t.reporter_name ??
+            t.Reporter?.username ??
+            t.created_by_name ??
+            t.reported_by ??
+            "",
+          assignee_name:
+            t.assignee ??
+            t.assignee_name ??
+            t.technician_name ??
+            t.Technician?.username ??
+            "",
+          vendor_name: t.vendor_name ?? t.RepairVendor?.vendor_name ?? "",
+          repair_type: t.repair_type ?? "",
+          total_cost:
+            t.total_cost ??
+            Number(t.labor_cost || 0) +
+              Number(t.parts_cost || 0) +
+              Number(t.other_cost || 0),
+          user_confirmed: t.user_confirmed ?? t.is_user_confirmed ?? null,
+        }))
+        // vẫn chỉ giữ ticket do chính user tạo
+        .filter((t) => String(t.reported_by) === String(userId));
 
       normalized.sort(
         (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)
       );
       setMyTickets(normalized);
-      setTicketPage(1); // reset về trang 1 mỗi lần reload
+      setTicketPage(1);
     } catch (e) {
       setTicketsError(
-        e?.response?.data?.message ||
-          "Không tải được danh sách ticket của bạn."
+        e?.response?.data?.message || "Không tải được danh sách ticket của bạn."
       );
       setMyTickets([]);
     } finally {
@@ -670,8 +796,7 @@ const ProfileUsers = () => {
 
   useEffect(() => {
     fetchMyTickets();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  }, [userId]); // eslint-disable-line
 
   // Modal tạo ticket
   const NEW_TICKET_DEFAULT = {
@@ -741,7 +866,12 @@ const ProfileUsers = () => {
 
   // Lọc + phân trang
   const filteredByTab = useMemo(() => {
-    if (ticketTab === "all") return myTickets;
+    if (ticketTab === "all") {
+      // 👇 giữ nguyên như API cũ: tab "Tất cả" KHÔNG hiển thị "Huỷ"
+      return myTickets.filter(
+        (t) => String(t.status || "").toLowerCase() !== "canceled"
+      );
+    }
     return myTickets.filter(
       (t) => String(t.status || "").toLowerCase() === ticketTab
     );
@@ -778,7 +908,6 @@ const ProfileUsers = () => {
     Math.ceil(filteredTickets.length / ticketPageSize)
   );
 
-  // Bảo vệ khi thay đổi filter/page size làm số trang < trang hiện tại
   useEffect(() => {
     setTicketPage((p) => Math.min(p, totalTicketPages));
   }, [totalTicketPages]);
@@ -788,27 +917,27 @@ const ProfileUsers = () => {
     return filteredTickets.slice(start, start + ticketPageSize);
   }, [filteredTickets, ticketPage, ticketPageSize]);
 
-  // ----------- CHỐT: chắn xác nhận lặp lại cực nhanh -----------
+  // ----------- CHỐT: chặn xác nhận lặp lại cực nhanh -----------
   const confirmedOnceRef = useRef(new Set());
 
-  // Xử lý xác nhận hoàn thành (chống spam + optimistic update + ẩn nút)
+  // Xử lý xác nhận hoàn thành — CHỈ user tạo ticket mới được bấm
   const handleUserConfirm = async (ticketId) => {
     if (!userId) return;
+    if (confirmingId === ticketId || confirmedOnceRef.current.has(ticketId))
+      return;
 
-    // chặn double click khi đang pending hoặc đã click 1 lần cực nhanh
-    if (confirmingId === ticketId || confirmedOnceRef.current.has(ticketId)) return;
-
-    // nếu đã confirm rồi thì thôi; và chỉ cho phép khi status === completed
     const target = myTickets.find((t) => t.id_repair === ticketId);
     if (!target) return;
+
     const isCompleted = String(target.status || "").toLowerCase() === "completed";
+    const isOwner = String(target.reported_by) === String(userId);
+    if (!isOwner) return; // không phải chủ ticket thì không cho
     if (!isCompleted || target.user_confirmed) return;
 
-    // đánh dấu đã xử lý 1 lần
     confirmedOnceRef.current.add(ticketId);
     setConfirmingId(ticketId);
 
-    // ✅ Optimistic: ẩn nút ngay lập tức
+    // Optimistic update (giữ tương thích UI hiện tại)
     setMyTickets((prev) =>
       prev.map((t) =>
         t.id_repair === ticketId ? { ...t, user_confirmed: true } : t
@@ -817,10 +946,9 @@ const ProfileUsers = () => {
 
     try {
       await confirmComplete(ticketId, Number(userId));
-      // Đồng bộ lại dữ liệu thực tế từ BE (tuỳ thích)
       await fetchMyTickets();
     } catch (e) {
-      // ❌ Rollback nếu lỗi và cho phép bấm lại
+      // rollback
       setMyTickets((prev) =>
         prev.map((t) =>
           t.id_repair === ticketId ? { ...t, user_confirmed: false } : t
@@ -835,12 +963,12 @@ const ProfileUsers = () => {
 
   if (!userId) {
     return (
-      <div className="min-h-screen bg-neutral-100 flex items-center justify-center p-6">
-        <div className="bg-white border border-neutral-200 rounded-xl w-full max-w-xl p-6 text-center">
-          <h1 className="text-xl font-semibold text-neutral-900 mb-2">
+      <div className={`${STYLES.page} flex items-center justify-center`}>
+        <div className={STYLES.panel + " w-full max-w-xl p-6 text-center"}>
+          <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-50 mb-2">
             Hồ sơ người dùng
           </h1>
-          <p className="text-neutral-600">
+          <p className="text-neutral-600 dark:text-neutral-300">
             Vui lòng đăng nhập để xem hồ sơ.
           </p>
         </div>
@@ -849,13 +977,16 @@ const ProfileUsers = () => {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-100 p-6 mt-10">
+    <div className={STYLES.page}>
       {/* FULL-WIDTH + ĐẢO THỨ TỰ: ticket trái, avatar phải */}
       <div className="w-full max-w-none flex flex-col lg:flex-row-reverse gap-6">
         {/* Sidebar */}
-        <section className="bg-white border border-neutral-200 rounded-xl w-full lg:w-52 flex-shrink-0 lg:sticky lg:top-6 h-fit">
-          <div className="p-4 border-b border-neutral-200 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-neutral-900">Hồ sơ</h2>
+        <section
+          className={`${STYLES.panel} w-full lg:w-56 flex-shrink-0 lg:sticky lg:top-6 h-fit`}
+          aria-label="Thanh thông tin cá nhân"
+        >
+          <div className={STYLES.panelHead}>
+            <h2 className={STYLES.hTitle}>Hồ sơ</h2>
             <button
               type="button"
               onClick={() => {
@@ -864,7 +995,7 @@ const ProfileUsers = () => {
                 setCpConfirm("");
                 setShowPwdModal(true);
               }}
-              className="text-[11px] px-2.5 py-1 rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+              className={STYLES.btnSoftIndigo}
             >
               Đổi MK
             </button>
@@ -872,22 +1003,22 @@ const ProfileUsers = () => {
 
           {loading ? (
             <div className="p-4 animate-pulse">
-              <div className="mx-auto w-20 h-20 rounded-full bg-neutral-200" />
-              <div className="mt-3 h-3 w-28 bg-neutral-200 rounded mx-auto" />
-              <div className="mt-2 h-3 w-20 bg-neutral-200 rounded mx-auto" />
+              <div className="mx-auto w-20 h-20 rounded-full bg-neutral-200 dark:bg-neutral-700" />
+              <div className="mt-3 h-3 w-28 bg-neutral-200 dark:bg-neutral-700 rounded mx-auto" />
+              <div className="mt-2 h-3 w-20 bg-neutral-200 dark:bg-neutral-700 rounded mx-auto" />
             </div>
           ) : (
             !error &&
             user && (
               <div className="p-4">
-                <div className="flex flex-col items-center">
-                  <div className="w-20 h-20 rounded-full overflow-hidden border border-neutral-200">
+                <div className="flex flex-col items-center group">
+                  <div
+                    className={`w-20 h-20 rounded-full overflow-hidden border border-neutral-200 dark:border-neutral-600 ${RING} ${TRANS}`}
+                  >
                     <img
                       src={
                         user?.id_users
-                          ? `${API_BASE}/avatars/${user.id_users}?t=${
-                              user?.updated_at || ""
-                            }`
+                          ? `${API_BASE}/avatars/${user.id_users}?t=${user?.updated_at || ""}`
                           : DEFAULT_AVT
                       }
                       alt="Avatar"
@@ -897,34 +1028,32 @@ const ProfileUsers = () => {
                     />
                   </div>
                   <div className="mt-3 text-center">
-                    <div className="text-sm font-medium text-neutral-900">
+                    <div className="text-sm font-medium text-neutral-900 dark:text-neutral-50">
                       {user.username || "—"}
                     </div>
-                    <div className="text-[12px] text-neutral-600 mt-0.5">
-                      {roleName}
-                    </div>
-                    <div className="text-[11px] text-neutral-500 mt-1">
+                    <div className={STYLES.textMute}>{roleName}</div>
+                    <div className="text-[11px] text-neutral-500 dark:text-neutral-300 mt-1">
                       ID: {user.id_users}
                     </div>
                   </div>
 
                   {/* Signature block */}
                   <div className="mt-4 w-full">
-                    <div className="text-xs font-semibold text-neutral-700 mb-1">
+                    <div className="text-xs font-semibold text-neutral-700 dark:text-neutral-100 mb-1">
                       Chữ ký
                     </div>
 
-                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3">
+                    <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-3">
                       <div className="flex items-center gap-2 mb-2">
                         <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white text-xs">
                           ✔
                         </span>
-                        <span className="text-[12px] text-emerald-700 font-medium">
+                        <span className="text-[12px] text-emerald-700 dark:text-emerald-300 font-medium">
                           {user?.signature_image ? "Đã thiết lập" : "Chưa có"}
                         </span>
                       </div>
 
-                      <div className="rounded-lg bg-white border border-neutral-200 p-2 flex items-center justify-center">
+                      <div className="rounded-lg bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 p-2 flex items-center justify-center">
                         <img
                           key={signatureUrl}
                           src={signatureUrl || `${API_BASE}/signatures/file/0`}
@@ -932,13 +1061,11 @@ const ProfileUsers = () => {
                           className="max-h-16 object-contain"
                           loading="lazy"
                           onError={(e) => {
-                            // Thử 1 lần cache-bust; nếu vẫn lỗi → ticket.png
                             if (!sigImgTriedRef.current && user?.id_users) {
                               sigImgTriedRef.current = true;
                               e.currentTarget.src = `${API_BASE}/signatures/file/${user.id_users}?v=retry-${Date.now()}`;
                               return;
                             }
-                            // Fallback cuối
                             e.currentTarget.src = `${API_BASE}/signatures/file/0?v=ticket-${Date.now()}`;
                           }}
                         />
@@ -956,7 +1083,7 @@ const ProfileUsers = () => {
                           type="button"
                           disabled={sigLoading}
                           onClick={onClickUploadSig}
-                          className="px-2.5 py-1.5 text-xs rounded-lg border border-neutral-300 hover:bg-neutral-50"
+                          className={STYLES.btn}
                         >
                           {sigLoading ? "Đang tải..." : "Tải ảnh chữ ký"}
                         </button>
@@ -964,7 +1091,7 @@ const ProfileUsers = () => {
                           type="button"
                           disabled={sigLoading}
                           onClick={openDrawModal}
-                          className="px-2.5 py-1.5 text-xs rounded-lg border border-neutral-300 hover:bg-neutral-50"
+                          className={STYLES.btn}
                         >
                           Vẽ chữ ký
                         </button>
@@ -973,7 +1100,7 @@ const ProfileUsers = () => {
                             type="button"
                             disabled={sigLoading}
                             onClick={handleDeleteSignature}
-                            className="px-2.5 py-1.5 text-xs rounded-lg border border-rose-200 text-rose-700 hover:bg-rose-50"
+                            className={`px-2.5 py-1.5 text-xs rounded-lg border border-rose-200 text-rose-700 hover:bg-rose-50 ${FOCUS} ${TRANS} dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-900/20`}
                           >
                             Xoá
                           </button>
@@ -984,8 +1111,8 @@ const ProfileUsers = () => {
                         <div
                           className={`mt-2 text-[12px] rounded px-3 py-2 border ${
                             sigMsg.type === "error"
-                              ? "bg-red-50 text-red-700 border-red-200"
-                              : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              ? "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800"
+                              : "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800"
                           }`}
                         >
                           {sigMsg.text}
@@ -993,12 +1120,10 @@ const ProfileUsers = () => {
                       )}
 
                       <div className="mt-2 text-center">
-                        <div className="text-[12px] text-neutral-900 font-medium leading-tight">
+                        <div className="text-[12px] text-neutral-900 dark:text-neutral-50 font-medium leading-tight">
                           {user?.username || "—"}
                         </div>
-                        <div className="text-[11px] text-neutral-500">
-                          {roleName}
-                        </div>
+                        <div className={STYLES.textMute}>{roleName}</div>
                       </div>
                     </div>
                   </div>
@@ -1012,30 +1137,25 @@ const ProfileUsers = () => {
         {/* Main */}
         <section className="flex-1 space-y-6">
           {/* Thông tin chi tiết */}
-          <div className="bg-white border border-neutral-200 rounded-xl">
-            <div className="p-4 border-b border-neutral-200">
-              <h3 className="text-sm font-semibold text-neutral-900">
-                Thông tin chi tiết
-              </h3>
+          <div className={STYLES.panel}>
+            <div className={STYLES.panelHead}>
+              <h3 className={STYLES.hTitle}>Thông tin chi tiết</h3>
             </div>
             {loading ? (
               <div className="p-4 animate-pulse space-y-3">
                 {[...Array(4)].map((_, i) => (
-                  <div
-                    key={i}
-                    className="grid grid-cols-12 gap-3 items-center"
-                  >
-                    <div className="col-span-4 h-3 bg-neutral-200 rounded" />
-                    <div className="col-span-8 h-3 bg-neutral-200 rounded" />
+                  <div key={i} className="grid grid-cols-12 gap-3 items-center">
+                    <div className="col-span-4 h-3 bg-neutral-100 dark:bg-neutral-700 rounded" />
+                    <div className="col-span-8 h-3 bg-neutral-100 dark:bg-neutral-700 rounded" />
                   </div>
                 ))}
               </div>
             ) : error ? (
-              <div className="p-4 text-sm text-red-700 bg-red-50 border-t border-red-200">
+              <div className="p-4 text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/20 border-t border-red-200 dark:border-red-800">
                 {error}
               </div>
             ) : user ? (
-              <div className="divide-y divide-neutral-200">
+              <div className={STYLES.divider}>
                 <Row label="Email" value={user.email_user || "—"} />
                 <Row label="Bộ phận" value={departmentName} />
                 <Row label="Mã bộ phận" value={user.id_departments || "—"} />
@@ -1043,7 +1163,7 @@ const ProfileUsers = () => {
                 <Row
                   label="Chữ ký"
                   value={
-                    <span className="inline-flex items-center gap-1 text-emerald-700">
+                    <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
                       <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white text-[10px]">
                         ✔
                       </span>
@@ -1056,41 +1176,41 @@ const ProfileUsers = () => {
           </div>
 
           {/* Thiết bị */}
-          <div className="bg-white border border-neutral-200 rounded-xl">
-            <div className="p-4 border-b border-neutral-200 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-neutral-900">
-                Thiết bị đang sử dụng
-              </h3>
-              <div className="text-xs text-neutral-500">{devices.length} mục</div>
+          <div className={STYLES.panel}>
+            <div className={STYLES.panelHead}>
+              <h3 className={STYLES.hTitle}>Thiết bị đang sử dụng</h3>
+              <div className="text-xs text-neutral-500 dark:text-neutral-300">
+                {devices.length} mục
+              </div>
             </div>
             <div className="p-0">
               {devices.length > 0 ? (
                 <>
-                  <div className="overflow-x-auto">
+                  <div className={STYLES.tableWrap}>
                     <table className="min-w-full text-sm">
-                      <thead className="bg-neutral-50 text-neutral-600">
+                      <thead className={STYLES.tableHead}>
                         <tr>
-                          <Th>ID thiết bị</Th>
+                          <Th># Thiết bị</Th>
                           <Th>Tên thiết bị</Th>
                           <Th className="hidden md:table-cell">Ghi chú</Th>
                           <Th className="w-1">Tạo ticket</Th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-neutral-200">
+                      <tbody
+                        className={`divide-y divide-neutral-200 dark:divide-neutral-700`}
+                      >
                         {devices.map((d) => (
-                          <tr key={d.id_devices} className="hover:bg-neutral-50">
-                            <Td className="font-medium text-neutral-800">
-                              {d.id_devices}
-                            </Td>
+                          <tr key={d.id_devices} className={STYLES.hoverRow}>
+                            <Td className="font-medium">{d.id_devices}</Td>
                             <Td>{d.name_devices || "—"}</Td>
-                            <Td className="hidden md:table-cell text-neutral-500">
+                            <Td className="hidden md:table-cell text-neutral-500 dark:text-neutral-300">
                               {d.DeviceNote || d.note || "—"}
                             </Td>
                             <Td>
                               <button
                                 type="button"
                                 onClick={() => openCreateTicket(d.id_devices)}
-                                className="text-xs px-2 py-1.5 rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                                className={STYLES.btnSoftIndigo}
                               >
                                 + Ticket
                               </button>
@@ -1102,7 +1222,7 @@ const ProfileUsers = () => {
                   </div>
                 </>
               ) : (
-                <div className="p-4 text-sm text-neutral-600">
+                <div className="p-4 text-sm text-neutral-600 dark:text-neutral-300">
                   Không có thiết bị.
                 </div>
               )}
@@ -1110,12 +1230,10 @@ const ProfileUsers = () => {
           </div>
 
           {/* Tickets */}
-          <div className="bg-white border border-neutral-200 rounded-xl">
-            <div className="p-4 border-b border-neutral-200">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <h3 className="text-sm font-semibold text-neutral-900">
-                  Danh sách ticket
-                </h3>
+          <div className={STYLES.panel}>
+            <div className={STYLES.panelHead}>
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between w-full">
+                <h3 className={STYLES.hTitle}>Danh sách ticket</h3>
 
                 <div className="flex items-center gap-2">
                   <input
@@ -1125,11 +1243,11 @@ const ProfileUsers = () => {
                       setTicketPage(1);
                     }}
                     placeholder="Tìm theo tiêu đề / thiết bị / người báo cáo…"
-                    className="text-sm px-3 py-2 border rounded-lg border-neutral-300 w-56"
+                    className={`${STYLES.input} w-56`}
                     aria-label="Tìm ticket"
                   />
                   <select
-                    className="text-sm px-2 py-2 border rounded-lg border-neutral-300"
+                    className={STYLES.select}
                     value={ticketPageSize}
                     onChange={(e) => {
                       setTicketPageSize(Number(e.target.value));
@@ -1145,7 +1263,7 @@ const ProfileUsers = () => {
                   </select>
                   <button
                     onClick={refreshMyTickets}
-                    className="text-sm px-3 py-2 rounded-lg border border-neutral-300 hover:bg-neutral-50"
+                    className={STYLES.btn}
                     title="Làm mới danh sách ticket"
                   >
                     Làm mới
@@ -1164,11 +1282,11 @@ const ProfileUsers = () => {
                         setTicketTab(t.key);
                         setTicketPage(1);
                       }}
-                      className={`px-3 py-1.5 rounded-lg text-xs border transition ${
+                      className={`px-3 py-1.5 rounded-lg text-xs border ${TRANS} ${
                         active
-                          ? "bg-neutral-900 text-white border-neutral-900"
-                          : "border-neutral-200 text-neutral-700 hover:bg-neutral-50"
-                      }`}
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "border-neutral-200 text-neutral-700 hover:bg-sky-50 dark:border-neutral-600 dark:text-neutral-100 dark:hover:bg-neutral-700/50"
+                      } ${FOCUS}`}
                     >
                       {t.label}
                     </button>
@@ -1181,20 +1299,25 @@ const ProfileUsers = () => {
             {ticketsLoading ? (
               <div className="p-4 space-y-2">
                 {[...Array(6)].map((_, i) => (
-                  <div key={i} className="h-9 bg-neutral-100 rounded animate-pulse" />
+                  <div
+                    key={i}
+                    className="h-9 bg-neutral-100 dark:bg-neutral-700 rounded animate-pulse"
+                  />
                 ))}
               </div>
             ) : ticketsError ? (
-              <div className="p-4 text-sm text-red-700 bg-red-50 border-t border-red-200">
+              <div className="p-4 text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/20 border-t border-red-200 dark:border-red-800">
                 {ticketsError}
               </div>
             ) : filteredTickets.length === 0 ? (
-              <div className="p-4 text-sm text-neutral-600">Không có ticket.</div>
+              <div className="p-4 text-sm text-neutral-600 dark:text-neutral-300">
+                Không có ticket.
+              </div>
             ) : (
               <>
-                <div className="overflow-x-auto">
+                <div className={STYLES.tableWrap}>
                   <table className="min-w-full text-sm">
-                    <thead className="bg-neutral-50 text-neutral-600">
+                    <thead className={STYLES.tableHead}>
                       <tr>
                         <Th className="w-16">#</Th>
                         <Th>Thiết bị</Th>
@@ -1211,21 +1334,26 @@ const ProfileUsers = () => {
                         <Th className="w-40">Hành động</Th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-neutral-200">
+                    <tbody className="divide-y divide-neutral-200 dark:divide-neutral-700">
                       {pageTickets.map((t) => {
                         const devTop = t.device_code || "—";
                         const devSub = t.device_name || "—";
                         const title = t.title || "—";
-                        const titleSub = (t.issue_description || "").trim() || null;
+                        const titleSub =
+                          (t.issue_description || "").trim() || null;
 
                         const sev =
                           t.severity_label ||
-                          VI_SEVERITY[String(t.severity || "").toLowerCase()] ||
+                          VI_SEVERITY[
+                            String(t.severity || "").toLowerCase()
+                          ] ||
                           t.severity ||
                           "—";
                         const pri =
                           t.priority_label ||
-                          VI_PRIORITY[String(t.priority || "").toLowerCase()] ||
+                          VI_PRIORITY[
+                            String(t.priority || "").toLowerCase()
+                          ] ||
                           t.priority ||
                           "—";
                         const reporter = t.reporter_name || user?.username || "—";
@@ -1237,36 +1365,37 @@ const ProfileUsers = () => {
                           ? "Nội bộ"
                           : "";
 
-                        const isCompleted = String(t.status).toLowerCase() === "completed";
+                        const isCompleted =
+                          String(t.status).toLowerCase() === "completed";
+                        const isOwner =
+                          String(t.reported_by) === String(userId);
 
                         return (
                           <tr
                             key={t.id_repair}
-                            className={`hover:bg-neutral-50 ${t.user_confirmed ? "opacity-70" : ""}`}
+                            className={`${STYLES.hoverRow} ${
+                              t.user_confirmed ? "opacity-70" : ""
+                            }`}
                           >
                             <Td className="font-semibold">#{t.id_repair}</Td>
 
                             <Td className="whitespace-nowrap">
-                              <div className="font-medium text-neutral-800">
-                                {devTop}
-                              </div>
-                              <div className="text-[11px] text-neutral-500">
-                                {devSub}
-                              </div>
+                              <div className="font-medium">{devTop}</div>
+                              <div className={STYLES.textMute}>{devSub}</div>
                             </Td>
 
                             <Td className="max-w-[720px]">
                               <div className="flex items-center gap-1">
                                 <a
                                   href={`/repairs/${t.id_repair}`}
-                                  className="text-neutral-900 hover:underline font-medium truncate"
+                                  className="text-neutral-900 dark:text-neutral-50 hover:underline font-medium truncate"
                                   title={title}
                                 >
                                   {title}
                                 </a>
                               </div>
                               {titleSub ? (
-                                <div className="text-[11px] text-neutral-500 truncate">
+                                <div className="text-[11px] text-neutral-500 dark:text-neutral-300 truncate">
                                   {titleSub}
                                 </div>
                               ) : null}
@@ -1295,12 +1424,8 @@ const ProfileUsers = () => {
                               {t.sla_hours ?? "-"}
                             </Td>
                             <Td className="hidden lg:table-cell">
-                              <div className="font-medium text-neutral-800">
-                                {handler}
-                              </div>
-                              <div className="text-[11px] text-neutral-500">
-                                {handlerSub}
-                              </div>
+                              <div className="font-medium">{handler}</div>
+                              <div className={STYLES.textMute}>{handlerSub}</div>
                             </Td>
                             <Td className="hidden md:table-cell">
                               {formatVND(t.total_cost)}
@@ -1311,6 +1436,7 @@ const ProfileUsers = () => {
                               {(() => {
                                 const canConfirm =
                                   isCompleted &&
+                                  isOwner && // chỉ chủ ticket
                                   !t.user_confirmed &&
                                   confirmingId !== t.id_repair &&
                                   !confirmedOnceRef.current.has(t.id_repair);
@@ -1319,13 +1445,15 @@ const ProfileUsers = () => {
                                   return (
                                     <button
                                       type="button"
-                                      onClick={() => handleUserConfirm(t.id_repair)}
+                                      onClick={() =>
+                                        handleUserConfirm(t.id_repair)
+                                      }
                                       disabled={confirmingId === t.id_repair}
                                       className={`text-xs px-3 py-1.5 rounded-lg text-white ${
                                         confirmingId === t.id_repair
-                                          ? "bg-emerald-400 pointer-events-none"
+                                          ? "bg-emerald-400"
                                           : "bg-emerald-600 hover:bg-emerald-700"
-                                      }`}
+                                      } ${FOCUS} ${TRANS}`}
                                       title="Xác nhận đã hoàn thành"
                                     >
                                       {confirmingId === t.id_repair
@@ -1337,13 +1465,17 @@ const ProfileUsers = () => {
 
                                 if (t.user_confirmed) {
                                   return (
-                                    <span className="text-xs text-emerald-700">
+                                    <span className="text-xs text-emerald-700 dark:text-emerald-300">
                                       Đã xác nhận
                                     </span>
                                   );
                                 }
 
-                                return <span className="text-xs text-neutral-400">—</span>;
+                                return (
+                                  <span className="text-xs text-neutral-400">
+                                    —
+                                  </span>
+                                );
                               })()}
                             </Td>
                           </tr>
@@ -1355,18 +1487,20 @@ const ProfileUsers = () => {
 
                 {/* Pagination */}
                 <div className="p-4 flex items-center justify-between text-sm">
-                  <div className="text-neutral-600">
+                  <div className="text-neutral-600 dark:text-neutral-300">
                     Tổng: {filteredTickets.length} ticket
                   </div>
                   <div className="flex items-center gap-2">
                     <button
                       disabled={ticketPage <= 1}
-                      onClick={() => setTicketPage((p) => Math.max(1, p - 1))}
+                      onClick={() =>
+                        setTicketPage((p) => Math.max(1, p - 1))
+                      }
                       className={`px-3 py-1.5 rounded-lg border ${
                         ticketPage <= 1
-                          ? "text-neutral-400 border-neutral-200"
-                          : "text-neutral-700 border-neutral-300 hover:bg-neutral-50"
-                      }`}
+                          ? "text-neutral-400 border-neutral-200 dark:border-neutral-700"
+                          : "text-neutral-700 border-neutral-300 hover:bg-sky-50 dark:text-neutral-100 dark:border-neutral-600 dark:hover:bg-neutral-700/50"
+                      } ${FOCUS} ${TRANS}`}
                     >
                       Trước
                     </button>
@@ -1381,9 +1515,9 @@ const ProfileUsers = () => {
                       }
                       className={`px-3 py-1.5 rounded-lg border ${
                         ticketPage >= totalTicketPages
-                          ? "text-neutral-400 border-neutral-200"
-                          : "text-neutral-700 border-neutral-300 hover:bg-neutral-50"
-                      }`}
+                          ? "text-neutral-400 border-neutral-200 dark:border-neutral-700"
+                          : "text-neutral-700 border-neutral-300 hover:bg-sky-50 dark:text-neutral-100 dark:border-neutral-600 dark:hover:bg-neutral-700/50"
+                      } ${FOCUS} ${TRANS}`}
                     >
                       Sau
                     </button>
@@ -1397,35 +1531,39 @@ const ProfileUsers = () => {
 
       {/* Modal đổi mật khẩu */}
       {showPwdModal && (
-        <div className="fixed inset-0 z-50">
+        <div className="fixed inset-0 z-50" role="dialog" aria-modal="true">
           <div
             className="absolute inset-0 bg-black/40"
             onClick={() => !cpLoading && setShowPwdModal(false)}
           />
           <div className="absolute inset-0 flex items-center justify-center p-4">
-            <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-neutral-200">
-              <div className="p-4 border-b border-neutral-200 flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-neutral-900">
-                  Đổi mật khẩu
-                </h4>
+            <div className={`${STYLES.panel} w-full max-w-md shadow-2xl`}>
+              <div className={STYLES.panelHead}>
+                <h4 className={STYLES.hTitle}>Đổi mật khẩu</h4>
                 <button
                   type="button"
-                  className="text-neutral-500 hover:text-neutral-800"
+                  className={`text-neutral-500 dark:text-neutral-300 hover:text-neutral-800 dark:hover:text-neutral-100 ${FOCUS}`}
                   onClick={() => !cpLoading && setShowPwdModal(false)}
+                  aria-label="Đóng"
                 >
                   ✕
                 </button>
               </div>
 
-              <form onSubmit={handleSubmitChangePassword} className="p-4 space-y-3">
-                <div className="text-xs text-neutral-600">
+              <form
+                onSubmit={handleSubmitChangePassword}
+                className="p-4 space-y-3"
+              >
+                <div className={STYLES.subText}>
                   ID người dùng:{" "}
-                  <span className="font-medium text-neutral-900">{userId}</span>
+                  <span className="font-medium text-neutral-900 dark:text-neutral-50">
+                    {userId}
+                  </span>
                 </div>
 
-                <div className="flex items-center border-2 py-2 px-3 rounded-xl">
+                <div className="flex items-center border-2 border-neutral-200 dark:border-neutral-600 py-2 px-3 rounded-xl bg-white dark:bg-neutral-800">
                   <input
-                    className="pl-2 w-full outline-none border-none"
+                    className="pl-2 w-full outline-none border-none bg-transparent text-neutral-900 dark:text-neutral-50"
                     type={cpShow.nw ? "text" : "password"}
                     value={cpNew}
                     onChange={(e) => setCpNew(e.target.value)}
@@ -1436,7 +1574,7 @@ const ProfileUsers = () => {
                   />
                   <button
                     type="button"
-                    className="text-xs text-indigo-600 ml-2"
+                    className="text-xs text-sky-700 dark:text-sky-300 ml-2"
                     onClick={() => setCpShow((s) => ({ ...s, nw: !s.nw }))}
                   >
                     {cpShow.nw ? "Ẩn" : "Hiện"}
@@ -1445,9 +1583,9 @@ const ProfileUsers = () => {
 
                 <PasswordStrength value={cpNew} />
 
-                <div className="flex items-center border-2 py-2 px-3 rounded-xl">
+                <div className="flex items-center border-2 border-neutral-200 dark:border-neutral-600 py-2 px-3 rounded-xl bg-white dark:bg-neutral-800">
                   <input
-                    className="pl-2 w-full outline-none border-none"
+                    className="pl-2 w-full outline-none border-none bg-transparent text-neutral-900 dark:text-neutral-50"
                     type={cpShow.cf ? "text" : "password"}
                     value={cpConfirm}
                     onChange={(e) => setCpConfirm(e.target.value)}
@@ -1458,7 +1596,7 @@ const ProfileUsers = () => {
                   />
                   <button
                     type="button"
-                    className="text-xs text-indigo-600 ml-2"
+                    className="text-xs text-sky-700 dark:text-sky-300 ml-2"
                     onClick={() => setCpShow((s) => ({ ...s, cf: !s.cf }))}
                   >
                     {cpShow.cf ? "Ẩn" : "Hiện"}
@@ -1469,8 +1607,8 @@ const ProfileUsers = () => {
                   <div
                     className={`text-sm rounded px-3 py-2 border ${
                       cpMsg.type === "error"
-                        ? "bg-red-50 text-red-700 border-red-200"
-                        : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        ? "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800"
+                        : "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800"
                     }`}
                   >
                     {cpMsg.text}
@@ -1482,16 +1620,14 @@ const ProfileUsers = () => {
                     type="button"
                     disabled={cpLoading}
                     onClick={() => setShowPwdModal(false)}
-                    className="px-3 py-2 rounded-lg border border-neutral-200 text-neutral-700 hover:bg-neutral-50"
+                    className={STYLES.btn}
                   >
                     Hủy
                   </button>
                   <button
                     type="submit"
                     disabled={cpLoading}
-                    className={`px-4 py-2 rounded-lg text-white font-semibold ${
-                      cpLoading ? "bg-indigo-400" : "bg-indigo-600 hover:bg-indigo-700"
-                    }`}
+                    className={STYLES.btnPrimary}
                   >
                     {cpLoading ? "Đang cập nhật..." : "Cập nhật"}
                   </button>
@@ -1504,23 +1640,26 @@ const ProfileUsers = () => {
 
       {/* Modal vẽ chữ ký */}
       {showDrawModal && (
-        <div className="fixed inset-0 z-50">
+        <div className="fixed inset-0 z-50" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-black/40" onClick={closeDrawModal} />
           <div className="absolute inset-0 flex items-center justify-center p-4">
-            <div className="w-full max-w-2xl bg-white rounded-xl shadow-2xl border border-neutral-200 overflow-hidden">
-              <div className="p-4 border-b border-neutral-200 flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-neutral-900">Vẽ chữ ký</h4>
+            <div
+              className={`${STYLES.panel} w-full max-w-2xl shadow-2xl overflow-hidden`}
+            >
+              <div className={STYLES.panelHead}>
+                <h4 className={STYLES.hTitle}>Vẽ chữ ký</h4>
                 <button
                   type="button"
-                  className="text-neutral-500 hover:text-neutral-800"
+                  className={`text-neutral-500 dark:text-neutral-300 hover:text-neutral-800 dark:hover:text-neutral-100 ${FOCUS}`}
                   onClick={closeDrawModal}
+                  aria-label="Đóng"
                 >
                   ✕
                 </button>
               </div>
 
               <div className="p-4">
-                <div className="rounded-lg border border-neutral-300 bg-neutral-50 p-2 overflow-auto">
+                <div className="rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 p-2 overflow-auto">
                   <canvas
                     ref={canvasRef}
                     onMouseDown={onStartDraw}
@@ -1530,29 +1669,23 @@ const ProfileUsers = () => {
                     onTouchStart={onStartDraw}
                     onTouchMove={onMoveDraw}
                     onTouchEnd={onEndDraw}
-                    className="bg-white rounded-md shadow-inner cursor-crosshair select-none touch-none"
+                    className="bg-white dark:bg-neutral-900 rounded-md shadow-inner cursor-crosshair select-none touch-none"
                   />
                 </div>
 
                 <div className="mt-3 flex items-center justify-between">
-                  <div className="text-xs text-neutral-500">
+                  <div className="text-xs text-neutral-500 dark:text-neutral-300">
                     Dùng chuột hoặc tay (mobile) để ký. Nên ký trong khung trắng.
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={onClearCanvas}
-                      className="px-3 py-2 rounded-lg border border-neutral-300 text-neutral-700 hover:bg-neutral-50 text-sm"
-                    >
+                    <button type="button" onClick={onClearCanvas} className={STYLES.btn}>
                       Xoá khung
                     </button>
                     <button
                       type="button"
                       disabled={sigLoading}
                       onClick={onSaveDrawing}
-                      className={`px-4 py-2 rounded-lg text-white font-semibold ${
-                        sigLoading ? "bg-indigo-400" : "bg-indigo-600 hover:bg-indigo-700"
-                      } text-sm`}
+                      className={STYLES.btnPrimary}
                     >
                       {sigLoading ? "Đang lưu..." : "Lưu chữ ký"}
                     </button>
@@ -1563,8 +1696,8 @@ const ProfileUsers = () => {
                   <div
                     className={`mt-3 text-sm rounded px-3 py-2 border ${
                       sigMsg.type === "error"
-                        ? "bg-red-50 text-red-700 border-red-200"
-                        : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        ? "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800"
+                        : "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800"
                     }`}
                   >
                     {sigMsg.text}
@@ -1578,7 +1711,7 @@ const ProfileUsers = () => {
 
       {/* Modal tạo ticket */}
       {showCreateTicket && (
-        <div className="fixed inset-0 z-50">
+        <div className="fixed inset-0 z-50" role="dialog" aria-modal="true">
           <div
             className="absolute inset-0 bg-black/40"
             onClick={() => !ntLoading && setShowCreateTicket(false)}
@@ -1586,16 +1719,15 @@ const ProfileUsers = () => {
           <div className="absolute inset-0 flex items-center justify-center p-4">
             <form
               onSubmit={submitCreateTicket}
-              className="w-full max-w-lg bg-white rounded-xl shadow-2xl border border-neutral-200 overflow-hidden"
+              className={`${STYLES.panel} w-full max-w-lg shadow-2xl overflow-hidden`}
             >
-              <div className="p-4 border-b border-neutral-200 flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-neutral-900">
-                  Tạo yêu cầu sửa chữa
-                </h4>
+              <div className={STYLES.panelHead}>
+                <h4 className={STYLES.hTitle}>Tạo yêu cầu sửa chữa</h4>
                 <button
                   type="button"
-                  className="text-neutral-500 hover:text-neutral-800"
+                  className={`text-neutral-500 dark:text-neutral-300 hover:text-neutral-800 dark:hover:text-neutral-100 ${FOCUS}`}
                   onClick={() => !ntLoading && setShowCreateTicket(false)}
+                  aria-label="Đóng"
                 >
                   ✕
                 </button>
@@ -1603,9 +1735,9 @@ const ProfileUsers = () => {
 
               <div className="p-4 space-y-3">
                 <div>
-                  <div className="text-xs text-neutral-600 mb-1">Thiết bị</div>
+                  <div className={STYLES.subText + " mb-1"}>Thiết bị</div>
                   <select
-                    className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
+                    className={STYLES.select}
                     value={ntForm.id_devices}
                     onChange={(e) =>
                       setNtForm({ ...ntForm, id_devices: e.target.value })
@@ -1623,9 +1755,9 @@ const ProfileUsers = () => {
                 </div>
 
                 <div>
-                  <div className="text-xs text-neutral-600 mb-1">Tiêu đề</div>
+                  <div className={STYLES.subText + " mb-1"}>Tiêu đề</div>
                   <input
-                    className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
+                    className={STYLES.input}
                     placeholder="VD: Laptop không khởi động"
                     value={ntForm.title}
                     onChange={(e) =>
@@ -1637,10 +1769,10 @@ const ProfileUsers = () => {
                 </div>
 
                 <div>
-                  <div className="text-xs text-neutral-600 mb-1">Mô tả</div>
+                  <div className={STYLES.subText + " mb-1"}>Mô tả</div>
                   <textarea
                     rows={4}
-                    className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
+                    className={STYLES.input}
                     placeholder="Triệu chứng, khi nào xảy ra, đã thử gì…"
                     value={ntForm.issue_description}
                     onChange={(e) =>
@@ -1655,9 +1787,9 @@ const ProfileUsers = () => {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <div className="text-xs text-neutral-600 mb-1">Mức độ</div>
+                    <div className={STYLES.subText + " mb-1"}>Mức độ</div>
                     <select
-                      className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
+                      className={STYLES.select}
                       value={ntForm.severity}
                       onChange={(e) =>
                         setNtForm({ ...ntForm, severity: e.target.value })
@@ -1671,9 +1803,9 @@ const ProfileUsers = () => {
                     </select>
                   </div>
                   <div>
-                    <div className="text-xs text-neutral-600 mb-1">Priority</div>
+                    <div className={STYLES.subText + " mb-1"}>Priority</div>
                     <select
-                      className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
+                      className={STYLES.select}
                       value={ntForm.priority}
                       onChange={(e) =>
                         setNtForm({ ...ntForm, priority: e.target.value })
@@ -1689,11 +1821,11 @@ const ProfileUsers = () => {
                 </div>
 
                 <div>
-                  <div className="text-xs text-neutral-600 mb-1">SLA (giờ)</div>
+                  <div className={STYLES.subText + " mb-1"}>SLA (giờ)</div>
                   <input
                     type="number"
                     min={1}
-                    className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm"
+                    className={STYLES.input}
                     value={ntForm.sla_hours}
                     onChange={(e) =>
                       setNtForm({
@@ -1709,8 +1841,8 @@ const ProfileUsers = () => {
                   <div
                     className={`text-sm rounded px-3 py-2 border ${
                       ntMsg.type === "error"
-                        ? "bg-red-50 text-red-700 border-red-200"
-                        : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        ? "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800"
+                        : "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800"
                     }`}
                   >
                     {ntMsg.text}
@@ -1718,21 +1850,19 @@ const ProfileUsers = () => {
                 )}
               </div>
 
-              <div className="p-4 border-t border-neutral-200 flex items-center justify-end gap-2">
+              <div className="p-4 border-t border-neutral-200 dark:border-neutral-700 flex items-center justify-end gap-2">
                 <button
                   type="button"
                   disabled={ntLoading}
                   onClick={() => setShowCreateTicket(false)}
-                  className="px-3 py-2 rounded-lg border border-neutral-200 text-neutral-700 hover:bg-neutral-50"
+                  className={STYLES.btn}
                 >
                   Hủy
                 </button>
                 <button
                   type="submit"
                   disabled={ntLoading}
-                  className={`px-4 py-2 rounded-lg text-white font-semibold ${
-                    ntLoading ? "bg-indigo-400" : "bg-indigo-600 hover:bg-indigo-700"
-                  }`}
+                  className={STYLES.btnPrimary}
                 >
                   {ntLoading ? "Đang tạo..." : "Tạo ticket"}
                 </button>
@@ -1745,43 +1875,43 @@ const ProfileUsers = () => {
   );
 };
 
-// ---------- Sub components ----------
+/* ---------- Sub components ---------- */
 const Row = ({ label, value }) => (
   <div className="grid grid-cols-12 gap-3 p-3">
-    <div className="col-span-4 text-xs uppercase tracking-wide text-neutral-500">
+    <div className="col-span-4 text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-300">
       {label}
     </div>
-    <div className="col-span-8 text-sm text-neutral-900">{value}</div>
+    <div className="col-span-8 text-sm text-neutral-900 dark:text-neutral-50">
+      {value}
+    </div>
   </div>
 );
 
 const Th = ({ children, className = "" }) => (
-  <th
-    className={`text-left text-xs font-medium uppercase tracking-wide px-3 py-2 ${className}`}
-  >
-    {children}
-  </th>
+  <th className={`${STYLES.tableTh} ${className}`}>{children}</th>
 );
 
 const Td = ({ children, className = "" }) => (
-  <td className={`px-3 py-2 text-sm text-neutral-800 ${className}`}>{children}</td>
+  <td className={`${STYLES.tableTd} ${className}`}>{children}</td>
 );
 
 function PasswordStrength({ value }) {
   const score = [
     value.length >= 6,
     /[A-Z]/.test(value),
-    /[a-z]/.test(value),
+    [/[a-z]/.test(value)],
     /\d/.test(value),
     /[^A-Za-z0-9]/.test(value),
-  ].filter(Boolean).length;
+  ]
+    .flat()
+    .filter(Boolean).length;
   const label =
     ["Rất yếu", "Yếu", "Trung bình", "Khá", "Mạnh", "Rất mạnh"][score] || "";
   const colors = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#16a34a", "#15803d"];
 
   return (
     <div className="mb-1">
-      <div className="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
+      <div className="h-1.5 w-full bg-gray-200 dark:bg-neutral-700 rounded-full overflow-hidden">
         <div
           className="h-1.5 rounded-full transition-all"
           style={{
@@ -1790,7 +1920,9 @@ function PasswordStrength({ value }) {
           }}
         />
       </div>
-      <div className="text-[11px] text-gray-500 mt-1">Độ mạnh: {label}</div>
+      <div className="text-[11px] text-gray-500 dark:text-neutral-300 mt-1">
+        Độ mạnh: {label}
+      </div>
     </div>
   );
 }

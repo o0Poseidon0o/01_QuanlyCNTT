@@ -30,6 +30,24 @@ const toNum = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+// === Helper: Lấy id_users hiện tại từ nhiều nguồn ===
+const getCurrentUserId = (req) => {
+  const candidates = [
+    req.user?.id_users,
+    req.user?.id,
+    req.auth?.id_users,
+    req.auth?.id,
+    req.headers["x-user-id"],
+    req.body?.user_id,
+    req.params?.user_id,
+  ];
+  for (const c of candidates) {
+    const v = toInt(c);
+    if (v) return v;
+  }
+  return null;
+};
+
 // Map alias -> Nhãn (tiếng Việt)
 const STATUS_MAP = new Map([
   ["duoc_yeu_cau", "Được yêu cầu"],
@@ -152,7 +170,6 @@ const resolveRepairTypeEnumValue = (raw, { id_vendor } = {}) => {
       if (wantVendor && VENDOR_ALIASES.has(nev)) return ev;   // "Bên ngoài"
       if (!wantVendor && INTERNAL_ALIASES.has(nev)) return ev; // "Nội bộ"
     }
-    // fallback
     return REPAIR_TYPE_ENUM_VALUES[0];
   }
   return wantVendor ? "vendor" : "internal";
@@ -417,12 +434,10 @@ const listAllRepairs = async (req, res) => {
 /* ==== MỚI ====  GET /api/repairs/search */
 const searchRepairs = async (req, res) => {
   try {
-    // Hỗ trợ: id_repair, reported_by, id_devices, status, severity, priority, q, from, to
     const { id_repair } = req.query;
 
     const where = buildWhereFromCommonQuery(req.query, { defaultExcludeCanceled: true });
 
-    // Nếu truyền id_repair thì ưu tiên nó (nhưng KHÔNG bắt buộc phải có)
     if (id_repair != null && id_repair !== "") {
       const id = toInt(id_repair);
       if (!id) return res.status(400).json({ message: "Invalid id_repair" });
@@ -441,7 +456,6 @@ const searchRepairs = async (req, res) => {
 
     const data = await hydrateRowsForList(rows);
 
-    // Nếu chỉ tìm theo id_repair: trả object hoặc null
     if (req.query.id_repair != null && req.query.id_repair !== "") {
       return res.json(data.length ? data[0] : null);
     }
@@ -664,20 +678,17 @@ const updateStatus = async (req, res) => {
       return res.status(400).json({ message: "Invalid id_repair" });
     }
 
-    // 1) Lấy ticket & khoá record
     const r = await RepairRequest.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
     if (!r) {
       await t.rollback();
       return res.status(404).json({ message: "Not found" });
     }
 
-    // 2) Lấy detail để thử lấy technician_user
     const detail = await RepairDetail.findOne({
       where: { id_repair: id },
       transaction: t,
     });
 
-    // 3) Resolve status
     const old_status = r.status;
     const resolvedStatus = ensureEnum(new_status, STATUS_MAP, old_status) || old_status;
 
@@ -685,7 +696,7 @@ const updateStatus = async (req, res) => {
     r.last_updated = new Date();
     await r.save({ transaction: t });
 
-    // 4) Chọn actor_user hợp lệ theo id_users
+    // Chọn actor_user hợp lệ theo id_users
     const findExistingUserId = async (userId) => {
       const v = toInt(userId);
       if (!v) return null;
@@ -699,6 +710,7 @@ const updateStatus = async (req, res) => {
 
     const candidates = [
       req.body?.actor_user,
+      getCurrentUserId(req), // ưu tiên user hiện tại
       detail?.technician_user,
       detail?.technician_id,
       r.reported_by,
@@ -720,17 +732,17 @@ const updateStatus = async (req, res) => {
       actorId = any?.id_users ?? null;
     }
 
-    // 5) Tạo history
-    const historyPayload = {
-      id_repair: id,
-      old_status,
-      new_status: resolvedStatus,
-      note: note || null,
-      created_at: new Date(),
-    };
-    if (actorId) historyPayload.actor_user = actorId;
-
-    await RepairHistory.create(historyPayload, { transaction: t });
+    await RepairHistory.create(
+      {
+        id_repair: id,
+        actor_user: actorId ?? null,
+        old_status,
+        new_status: resolvedStatus,
+        note: note || null,
+        created_at: new Date(),
+      },
+      { transaction: t }
+    );
 
     await t.commit();
     return res.json({ ok: true, actor_user: actorId ?? null });
@@ -764,7 +776,6 @@ const upsertDetail = async (req, res) => {
       next_maintenance_date,
     } = req.body || {};
 
-    // Map alias -> giá trị ENUM hợp lệ trong DB
     const repairTypeEnum = resolveRepairTypeEnumValue(repair_type, { id_vendor });
     const chosenIsVendor = VENDOR_ALIASES.has(normalizeKey(repairTypeEnum));
 
@@ -840,11 +851,11 @@ const addPart = async (req, res) => {
   }
 };
 
-/** POST /api/repairs/:id/files (multer upload) — chuyển sang filesController nhưng giữ lại cho tương thích */
+/** POST /api/repairs/:id/files (multer upload) — giữ cho tương thích */
 const uploadFiles = async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const uploaded_by = Number(req.body.uploaded_by) || null;
+    const uploaded_by = toInt(req.body?.uploaded_by) ?? getCurrentUserId(req) ?? null;
     const files = (req.files || []).map((f) => ({
       id_repair: id,
       file_path: f.path.replace(/\\/g, "/"),
@@ -869,7 +880,6 @@ const getSummaryStatsSafe = async (req, res) => {
       order: [["date_reported", "DESC"]],
     });
 
-    // Map id_repair -> chi phí trong RepairDetail
     const ids = requests.map((r) => r.id_repair);
     let detailsMap = new Map();
     if (ids.length) {
@@ -880,7 +890,6 @@ const getSummaryStatsSafe = async (req, res) => {
       detailsMap = new Map(details.map((d) => [d.id_repair, d.toJSON()]));
     }
 
-    // Phân phối trạng thái
     const statusCounts = new Map();
     for (const r of requests) {
       const key = STATUS_DICT.toCanonical(r.status, STATUS_DICT.defaultKey);
@@ -892,7 +901,6 @@ const getSummaryStatsSafe = async (req, res) => {
       value,
     }));
 
-    // Chi phí theo tháng
     const monthlyMap = new Map();
     for (const r of requests) {
       const d = detailsMap.get(r.id_repair) || {};
@@ -932,19 +940,26 @@ const approveRequest = async (req, res) => {
       return res.status(404).json({ message: "Not found" });
     }
 
+    const old_status = r.status; // lấy trước khi đổi
     const newStatus = ensureEnum("approved", STATUS_MAP, r.status);
-    const approverId = toInt(approver_user) ?? r.approved_by ?? r.reported_by;
+
+    const approverId =
+      toInt(approver_user) ??
+      getCurrentUserId(req) ??
+      r.approved_by ??
+      r.reported_by ??
+      null;
 
     r.status = newStatus;
-    r.approved_by = approverId || r.approved_by;
+    if (approverId) r.approved_by = approverId;
     r.last_updated = new Date();
     await r.save({ transaction: t });
 
     await RepairHistory.create(
       {
         id_repair: id,
-        actor_user: approverId || r.approved_by || r.reported_by,
-        old_status: r.status, // careful: r.status đã đổi; lưu old_status hợp lý:
+        actor_user: approverId || r.approved_by || r.reported_by || null,
+        old_status,
         new_status: newStatus,
         note: "Approved ticket",
         created_at: new Date(),
@@ -953,7 +968,7 @@ const approveRequest = async (req, res) => {
     );
 
     await t.commit();
-    return res.json({ ok: true });
+    return res.json({ ok: true, actor_user: approverId || null });
   } catch (e) {
     await t.rollback();
     console.error("approveRequest error:", e);
@@ -983,9 +998,9 @@ const assignTechnician = async (req, res) => {
       start_time,
     });
 
-    // update status -> in_progress
+    // update status -> in_progress (gọi nội bộ, không phá response chính)
     await updateStatus(
-      { params: { id }, body: { new_status: "in_progress", note: "Assign technician" } },
+      { params: { id }, body: { new_status: "in_progress", note: "Assign technician" }, user: req.user, auth: req.auth, headers: req.headers },
       { json: () => {}, status: () => ({ json: () => {} }) }
     );
 
@@ -1019,7 +1034,7 @@ const assignVendor = async (req, res) => {
     });
 
     await updateStatus(
-      { params: { id }, body: { new_status: move_status, note: "Assign vendor" } },
+      { params: { id }, body: { new_status: move_status, note: "Assign vendor" }, user: req.user, auth: req.auth, headers: req.headers },
       { json: () => {}, status: () => ({ json: () => {} }) }
     );
 
@@ -1039,7 +1054,7 @@ const cancelRequest = async (req, res) => {
       return res.status(400).json({ message: "Invalid id_repair" });
     }
     await updateStatus(
-      { params: { id }, body: { new_status: "canceled", note: note || "Canceled" } },
+      { params: { id }, body: { new_status: "canceled", note: note || "Canceled" }, user: req.user, auth: req.auth, headers: req.headers },
       { json: () => {}, status: () => ({ json: () => {} }) }
     );
     return res.json({ ok: true });
@@ -1064,7 +1079,6 @@ const removeRequest = async (req, res) => {
       return res.status(404).json({ message: "Not found" });
     }
 
-    // Xoá các bản ghi phụ (an toàn – nếu đã cascade ở DB thì vẫn ok)
     await RepairFiles.destroy({ where: { id_repair: id }, transaction: t });
     await RepairPartUsed.destroy({ where: { id_repair: id }, transaction: t });
     await RepairHistory.destroy({ where: { id_repair: id }, transaction: t });
@@ -1083,24 +1097,27 @@ const removeRequest = async (req, res) => {
 
 /**
  * POST /api/repairs/:id/confirm
- * Người dùng xác nhận hoàn thành: set status = "Hoàn tất", lưu history,
- * nếu User có signature_image (path) thì tự tạo 1 record RepairFiles trỏ tới ảnh chữ ký (không cần upload lại).
- * body: { user_id, note? }
+ * Người dùng hiện tại xác nhận hoàn thành:
+ *  - set status = "Hoàn tất"
+ *  - lưu history với actor_user = user hiện tại
+ *  - nếu User có signature_image (path) thì tạo 1 record RepairFiles tham chiếu ảnh chữ ký
  */
 const confirmComplete = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const id = Number(req.params.id);
-    const { user_id, note } = req.body || {};
     if (!Number.isInteger(id) || id <= 0) {
       await t.rollback();
       return res.status(400).json({ message: "Invalid id_repair" });
     }
-    const uid = toInt(user_id);
+
+    const uid = getCurrentUserId(req);
     if (!uid) {
       await t.rollback();
-      return res.status(400).json({ message: "Invalid user_id" });
+      return res.status(400).json({ message: "Missing current user (id_users)" });
     }
+
+    const note = (req.body?.note ?? "").toString().trim() || null;
 
     const r = await RepairRequest.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
     if (!r) {
@@ -1114,14 +1131,12 @@ const confirmComplete = async (req, res) => {
       return res.status(400).json({ message: "User not found" });
     }
 
-    // Chuyển trạng thái -> completed
     const old_status = r.status;
     const newStatus = ensureEnum("completed", STATUS_MAP, r.status);
     r.status = newStatus;
     r.last_updated = new Date();
     await r.save({ transaction: t });
 
-    // Lịch sử
     await RepairHistory.create(
       {
         id_repair: id,
@@ -1134,14 +1149,28 @@ const confirmComplete = async (req, res) => {
       { transaction: t }
     );
 
-    // Nếu có chữ ký ảnh đã lưu trong User.signature_image thì gắn vào Files (tham chiếu path)
     if (u.signature_image) {
+      const filePath = String(u.signature_image);
+      const fileName = (() => {
+        try {
+          const p = require("path");
+          return p.basename(filePath) || "signature.png";
+        } catch {
+          return "signature.png";
+        }
+      })();
+
       await RepairFiles.create(
         {
           id_repair: id,
-          file_path: String(u.signature_image),
-          file_name: "signature.png", // hoặc lấy basename từ path nếu muốn
-          mime_type: "image/png",
+          file_path: filePath.replace(/\\/g, "/"),
+          file_name: fileName,
+          mime_type:
+            fileName.toLowerCase().endsWith(".jpg") || fileName.toLowerCase().endsWith(".jpeg")
+              ? "image/jpeg"
+              : fileName.toLowerCase().endsWith(".png")
+              ? "image/png"
+              : "application/octet-stream",
           uploaded_by: uid,
           uploaded_at: new Date(),
         },
@@ -1150,7 +1179,7 @@ const confirmComplete = async (req, res) => {
     }
 
     await t.commit();
-    return res.json({ ok: true });
+    return res.json({ ok: true, actor_user: uid });
   } catch (e) {
     await t.rollback();
     console.error("confirmComplete error:", e);

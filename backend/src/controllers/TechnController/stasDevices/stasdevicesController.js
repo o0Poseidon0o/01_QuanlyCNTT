@@ -13,7 +13,6 @@ const getTbl = (Model) => {
     const t = Model.getTableName ? Model.getTableName() : Model.tableName;
     return typeof t === "string" ? t : t.tableName;
   } catch {
-    // fallback an toàn nếu model lạ
     return Model.tableName || "";
   }
 };
@@ -30,12 +29,12 @@ const TBL = {
  * GET /api/stasdevices/devices
  * ?department_id=ID  (optional)
  *
- * - Không có department_id  -> đếm toàn hệ thống
- * - Có department_id        -> chỉ đếm các thiết bị đang được gán (assignment end_time IS NULL)
- *                              cho user trong phòng ban đó.
+ * - Không có department_id  -> đếm toàn hệ thống theo loại (mỗi device 1 dòng)
+ * - Có department_id        -> đếm DISTINCT id_devices theo loại, dựa trên assignment MỚI NHẤT
+ *                              (ưu tiên end_time IS NULL, sau đó lấy id_assignment lớn nhất).
  */
 const getDeviceCountByType = async (req, res) => {
-  const sequelize = Devices.sequelize; // lấy instance
+  const sequelize = Devices.sequelize;
   const deptId = req.query.department_id || req.query.id_departments || null;
 
   try {
@@ -43,19 +42,29 @@ const getDeviceCountByType = async (req, res) => {
 
     if (deptId) {
       sql = `
+        WITH latest AS (
+          SELECT DISTINCT ON (da.id_devices)
+                 da.id_devices,
+                 da.id_users,
+                 u.id_departments
+          FROM "${TBL.deviceAssignment}" AS da
+          INNER JOIN "${TBL.users}" AS u
+                  ON u.id_users = da.id_users
+          /* Ưu tiên bản ghi đang active, sau đó mới tới id_assignment lớn nhất */
+          ORDER BY da.id_devices,
+                   (da.end_time IS NULL) DESC,
+                   da.id_assignment DESC
+        )
         SELECT
           d.id_devicetype,
           COALESCE(dt.device_type, 'Khác') AS device_type,
           COUNT(DISTINCT d.id_devices)::int AS count
         FROM "${TBL.devices}" AS d
+        INNER JOIN latest la
+                ON la.id_devices = d.id_devices
         LEFT JOIN "${TBL.devicetype}" AS dt
-          ON dt.id_devicetype = d.id_devicetype
-        INNER JOIN "${TBL.deviceAssignment}" AS da
-          ON da.id_devices = d.id_devices
-         AND da.end_time IS NULL
-        INNER JOIN "${TBL.users}" AS u
-          ON u.id_users = da.id_users
-         AND u.id_departments = :deptId
+               ON dt.id_devicetype = d.id_devicetype
+        WHERE la.id_departments = :deptId
         GROUP BY d.id_devicetype, dt.id_devicetype, dt.device_type
         ORDER BY device_type ASC;
       `;
@@ -65,10 +74,10 @@ const getDeviceCountByType = async (req, res) => {
         SELECT
           d.id_devicetype,
           COALESCE(dt.device_type, 'Khác') AS device_type,
-          COUNT(*)::int AS count
+          COUNT(d.id_devices)::int AS count
         FROM "${TBL.devices}" AS d
         LEFT JOIN "${TBL.devicetype}" AS dt
-          ON dt.id_devicetype = d.id_devicetype
+               ON dt.id_devicetype = d.id_devicetype
         GROUP BY d.id_devicetype, dt.id_devicetype, dt.device_type
         ORDER BY device_type ASC;
       `;
@@ -96,27 +105,39 @@ const getDeviceCountByType = async (req, res) => {
 /**
  * GET /api/stasdevices/by-department
  * Thống kê theo từng phòng ban & loại thiết bị.
- * Dựa trên assignment active (end_time IS NULL) qua users → departments.
+ * Mỗi thiết bị chỉ thuộc MỘT phòng ban theo assignment MỚI NHẤT
+ * (ưu tiên end_time IS NULL, nếu không có thì lấy id_assignment lớn nhất).
+ * Thiết bị chưa từng được gán -> "Chưa gán bộ phận".
  */
 const getDeviceTypeByDepartment = async (_req, res) => {
   const sequelize = Devices.sequelize;
 
   try {
     const sql = `
+      WITH latest AS (
+        SELECT DISTINCT ON (da.id_devices)
+               da.id_devices,
+               da.id_users,
+               u.id_departments
+        FROM "${TBL.deviceAssignment}" AS da
+        INNER JOIN "${TBL.users}" AS u
+                ON u.id_users = da.id_users
+        /* Ưu tiên bản ghi đang active, sau đó mới tới id_assignment lớn nhất */
+        ORDER BY da.id_devices,
+                 (da.end_time IS NULL) DESC,
+                 da.id_assignment DESC
+      )
       SELECT
         COALESCE(dep.department_name, 'Chưa gán bộ phận') AS department_name,
         COALESCE(dt.device_type, 'Khác')                   AS device_type,
         COUNT(DISTINCT d.id_devices)::int                  AS count
       FROM "${TBL.devices}" AS d
-      LEFT JOIN "${TBL.devicetype}" AS dt
-        ON dt.id_devicetype = d.id_devicetype
-      LEFT JOIN "${TBL.deviceAssignment}" AS da
-        ON da.id_devices = d.id_devices
-       AND da.end_time IS NULL
-      LEFT JOIN "${TBL.users}" AS u
-        ON u.id_users = da.id_users
+      LEFT JOIN latest la
+             ON la.id_devices = d.id_devices
       LEFT JOIN "${TBL.departments}" AS dep
-        ON dep.id_departments = u.id_departments
+             ON dep.id_departments = la.id_departments
+      LEFT JOIN "${TBL.devicetype}" AS dt
+             ON dt.id_devicetype = d.id_devicetype
       GROUP BY dep.id_departments, dep.department_name, dt.id_devicetype, dt.device_type
       ORDER BY dep.department_name ASC NULLS LAST, dt.device_type ASC;
     `;
