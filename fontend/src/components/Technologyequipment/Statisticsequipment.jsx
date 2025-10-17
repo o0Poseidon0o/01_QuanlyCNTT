@@ -12,6 +12,7 @@ import {
   Legend,
   Title,
 } from "chart.js";
+import { useLocation } from "react-router-dom";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend, Title);
 
@@ -31,8 +32,8 @@ function getThemeColors() {
     window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
 
   return {
-    text: isDark ? "#F3F4F6" : "#111827",       // chữ chính
-    subText: isDark ? "#D1D5DB" : "#4B5563",     // chữ phụ
+    text: isDark ? "#F3F4F6" : "#111827",
+    subText: isDark ? "#D1D5DB" : "#4B5563",
     grid: isDark ? "rgba(229,231,235,0.15)" : "rgba(156,163,175,0.3)",
     border: isDark ? "#374151" : "#E5E7EB",
     cardBg: isDark ? "bg-gray-800" : "bg-white",
@@ -64,6 +65,15 @@ ChartJS.register(centerTextPlugin);
 
 const Statisticsequipment = () => {
   const theme = getThemeColors();
+  const location = useLocation();
+
+  /** Key để ép remount chart khi đổi route (fix: vào trang thấy UI cũ) */
+  const [viewKey, setViewKey] = useState(0);
+  useEffect(() => {
+    setViewKey((k) => k + 1);
+    // tùy ý: reset bộ lọc khi vào trang từ route khác
+    setSelectedDept("");
+  }, [location.pathname]);
 
   /** Dữ liệu Doughnut: thiết bị theo loại (lọc được theo phòng ban) */
   const [deviceStats, setDeviceStats] = useState([]); // [{label, value}]
@@ -83,11 +93,14 @@ const Statisticsequipment = () => {
   const [deptNameToId, setDeptNameToId] = useState({}); // map name -> id (để click bar lọc doughnut)
   const [barLimit, setBarLimit] = useState(20); // top N
 
+  /** Helper chống cache cho axios */
+  const nocache = () => ({ headers: { "Cache-Control": "no-cache" }, params: { _ts: Date.now() } });
+
   // Lấy danh sách phòng ban
   useEffect(() => {
     (async () => {
       try {
-        const r = await axios.get(`${API_BASE}/departments/all-departments`);
+        const r = await axios.get(`${API_BASE}/departments/all-departments`, nocache());
         const arr = r.data?.departments ?? r.data ?? [];
         const list = Array.isArray(arr) ? arr : [];
         setDepartments(list);
@@ -99,7 +112,8 @@ const Statisticsequipment = () => {
         setDeptNameToId({});
       }
     })();
-  }, []);
+    // cũng ép refetch khi viewKey đổi (khi vào lại route)
+  }, [viewKey]);
 
   // Lấy dữ liệu doughnut theo phòng ban
   const fetchTypeStats = async (deptId) => {
@@ -107,7 +121,7 @@ const Statisticsequipment = () => {
       setErr("");
       setLoading(true);
       const url = `${API_BASE}/stasdevices/devices${deptId ? `?department_id=${deptId}` : ""}`;
-      const devRes = await axios.get(url);
+      const devRes = await axios.get(url, nocache());
       const devData = (devRes.data || []).map((r) => ({
         label: String(r.device_type || r["Devicetype.device_type"] || r.type || "Khác"),
         value: Number(r.count || r.total || 0),
@@ -125,7 +139,7 @@ const Statisticsequipment = () => {
   // Lấy dữ liệu tổng theo phòng ban
   const fetchDeptTotals = async () => {
     try {
-      const r = await axios.get(`${API_BASE}/stasdevices/by-department`);
+      const r = await axios.get(`${API_BASE}/stasdevices/by-department`, nocache());
       const rows = Array.isArray(r.data) ? r.data : [];
       const map = {};
       for (const row of rows) {
@@ -142,8 +156,9 @@ const Statisticsequipment = () => {
     }
   };
 
-  useEffect(() => { fetchTypeStats(selectedDept); }, [selectedDept]);
-  useEffect(() => { fetchDeptTotals(); }, []);
+  // fetch khi đổi bộ lọc & khi vào lại route
+  useEffect(() => { fetchTypeStats(selectedDept); }, [selectedDept, viewKey]);
+  useEffect(() => { fetchDeptTotals(); }, [viewKey]);
 
   /** Tổng để hiển thị ở giữa doughnut loại thiết bị (toàn hệ thống hoặc theo phòng ban) */
   const totalAll = useMemo(
@@ -159,7 +174,6 @@ const Statisticsequipment = () => {
 
   /** Kiểm tra khớp tổng — chỉ thông báo, không hiệu chỉnh */
   const isTotalMismatch = useMemo(() => {
-    // Nếu đang lọc phòng ban, totalAll là tổng trong phòng ban; ta chỉ so khi không lọc
     if (selectedDept) return false;
     return totalAll !== totalFromDept;
   }, [totalAll, totalFromDept, selectedDept]);
@@ -319,7 +333,6 @@ const Statisticsequipment = () => {
     <div className="p-6 min-h-screen bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100 transition-colors">
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-3xl font-bold">📊 Thống kê hệ thống</h1>
-        {/* Thanh tóm tắt tổng */}
         {!selectedDept && (
           <div
             className={`ml-auto text-xs px-3 py-2 rounded border ${isTotalMismatch ? "text-red-600 border-red-400 dark:text-rose-300 dark:border-rose-400" : "opacity-80"}`}
@@ -373,7 +386,8 @@ const Statisticsequipment = () => {
             <p className="text-sm opacity-70">Không có dữ liệu thiết bị.</p>
           ) : (
             <div className="h-[340px]">
-              <Doughnut data={doughnutData} options={doughnutOptions} />
+              {/* key để chart remount khi đổi route */}
+              <Doughnut key={`doughnut-${viewKey}-${selectedDept || "all"}`} data={doughnutData} options={doughnutOptions} />
             </div>
           )}
 
@@ -404,7 +418,7 @@ const Statisticsequipment = () => {
             </span>
           </div>
           <div className="h-[360px]">
-            <Doughnut data={vlHcmData} options={vlHcmOptions} />
+            <Doughnut key={`vlhcm-${viewKey}`} data={vlHcmData} options={vlHcmOptions} />
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
             <div className="flex items-center gap-2">
@@ -445,7 +459,7 @@ const Statisticsequipment = () => {
             <p className="text-sm opacity-70">Chưa có dữ liệu tổng theo phòng ban.</p>
           ) : (
             <div className="h-[460px]">
-              <Bar data={barData} options={barOptions} />
+              <Bar key={`bar-${viewKey}`} data={barData} options={barOptions} />
             </div>
           )}
         </div>
