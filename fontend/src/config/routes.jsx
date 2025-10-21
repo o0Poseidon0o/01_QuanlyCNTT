@@ -21,6 +21,7 @@ import DocumentManagement from "../views/Documents/DocumentsManagerment";
 import Techenologyquipment from "../views/Techequiqment/Techequiqment";
 import RepairTech from "../views/Techequiqment/RepairTech";
 import Staticsequipments from "../views/Techequiqment/Staticsequipment";
+import Softwarelist from "../views/Techequiqment/Softwaremanager";
 
 import DataentryRouter from "../Layout/Dataentry/DataentryRouter";
 import ChartRouter from "../Layout/Chart/ChartRouter";
@@ -53,4 +54,5 @@ export const ROUTES = [
   { path: "/Techequipment", component: Techenologyquipment, rule: RULES.DEVICES_LIST },
   { path: "/Repairhistory", component: RepairTech, rule: RULES.DEVICES_REPAIR },
   { path: "/Staticsequipment", component: Staticsequipments, rule: RULES.DEVICES_STATS },
+  { path: "/Softwarelist", component: Softwarelist, rule: RULES.DEVICES_STATS },
 ];

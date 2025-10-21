@@ -235,7 +235,7 @@ export default function Sidebar() {
                     label="Các loại thiết bị"
                     isOpen={
                       openEquip ||
-                      startsWith(["/Techequipment", "/Repairhistory", "/Staticsequipment"])
+                      startsWith(["/Techequipment", "/Repairhistory", "/Staticsequipment","/Softwarelist"])
                     }
                     setOpen={setOpenEquip}
                   >
@@ -252,10 +252,10 @@ export default function Sidebar() {
                     {canDeviceRepair && (
                       <li>
                         <NavLink
-                          to="/Repairhistory"
-                          icon="fas fa-tools text-blueGray-400"
-                          label="Lịch sử sửa chữa"
-                          active={isActive("/Repairhistory")}
+                          to="/Softwarelist"
+                          icon="fas fa-th-large text-indigo-500"
+                          label="Quản lý phần mềm"
+                          active={isActive("/Softwarelist")}
                         />
                       </li>
                     )}
@@ -269,6 +269,17 @@ export default function Sidebar() {
                         />
                       </li>
                     )}
+                    {canDeviceRepair && (
+                      <li>
+                        <NavLink
+                          to="/Repairhistory"
+                          icon="fas fa-tools text-blueGray-400"
+                          label="Lịch sử sửa chữa"
+                          active={isActive("/Repairhistory")}
+                        />
+                      </li>
+                    )}
+                    
                   </NavGroup>
                 </ul>
                 <hr className="my-4 md:min-w-full" />

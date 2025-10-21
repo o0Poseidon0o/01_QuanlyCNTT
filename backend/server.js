@@ -27,6 +27,9 @@ const AssignTech = require('./src/routes/Technologyequipment/deviceAssignRoutes'
 const roleAdminRoutes = require('./src/routes/RolesAdmin/roleAdminRoutes');
 // ==============================Signature======================================
 const signatureRoutes = require('./src/routes/users/signatureRoutes');
+//===============================Software======================================
+const softwareRoutes = require("./src/routes/Software/softwareRoutes");
+const deviceSoftwareRoutes = require("./src/routes/Software/deviceSoftwareRoutes");
 require('dotenv').config();
 const app = express();
 app.use(cors());
@@ -65,18 +68,22 @@ app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true, limit: "5mb" }));
 app.use(express.text({ type: "text/plain", limit: "5mb" })); // chỉ cho text/plain
 
-
-
-
-
 app.use("/api/signatures", signatureRoutes);
 
-// (tuỳ chọn) middleware bắt lỗi cuối cùng để log 500 rõ ràng
 app.use((err, _req, res, _next) => {
   console.error("UNCAUGHT ERROR:", err.stack || err);
   res.status(500).json({ message: "Internal Server Error", error: err.message });
 })
+//===============================Software======================================
+app.use("/api/software", softwareRoutes);
+app.use("/api/device-software", deviceSoftwareRoutes);
 
+
+
+
+
+
+// (tuỳ chọn) middleware bắt lỗi cuối cùng để log 500 rõ ràng
 sequelize
   .sync()
   .then(() => {
