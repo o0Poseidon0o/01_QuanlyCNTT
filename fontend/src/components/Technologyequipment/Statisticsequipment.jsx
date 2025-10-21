@@ -63,6 +63,16 @@ const centerTextPlugin = {
 };
 ChartJS.register(centerTextPlugin);
 
+/** Nhận diện khu vực theo tên thiết bị:
+ * - Nếu tên chứa "SS" (đầu, giữa, hoặc có khoảng trắng kẹp) => Vĩnh Long
+ * - Ngược lại => HCM
+ */
+function detectAreaFromDeviceName(name) {
+  const n = String(name || "").toUpperCase();
+  // Bao quát: từ đầu, giữa có khoảng trắng/ký tự đặc biệt, hoặc đơn giản là có "SS"
+  return /^SS\b/.test(n) || /\bSS\b/.test(n) || n.includes("SS") ? "Vĩnh Long" : "HCM";
+}
+
 const Statisticsequipment = () => {
   const theme = getThemeColors();
   const location = useLocation();
@@ -93,6 +103,9 @@ const Statisticsequipment = () => {
   const [deptNameToId, setDeptNameToId] = useState({}); // map name -> id (để click bar lọc doughnut)
   const [barLimit, setBarLimit] = useState(20); // top N
 
+  /** Dữ liệu all devices để phân bổ khu vực theo tên + loại thiết bị */
+  const [allDevices, setAllDevices] = useState([]); // từ /devices/all
+
   /** Helper chống cache cho axios */
   const nocache = () => ({ headers: { "Cache-Control": "no-cache" }, params: { _ts: Date.now() } });
 
@@ -112,7 +125,20 @@ const Statisticsequipment = () => {
         setDeptNameToId({});
       }
     })();
-    // cũng ép refetch khi viewKey đổi (khi vào lại route)
+  }, [viewKey]);
+
+  // Lấy danh sách thiết bị đầy đủ (để tính khu vực theo tên + loại)
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await axios.get(`${API_BASE}/devices/all`, nocache());
+        const list = Array.isArray(r.data) ? r.data : [];
+        setAllDevices(list);
+      } catch (e) {
+        console.warn("Không lấy được devices/all:", e?.message || e);
+        setAllDevices([]);
+      }
+    })();
   }, [viewKey]);
 
   // Lấy dữ liệu doughnut theo phòng ban
@@ -178,17 +204,70 @@ const Statisticsequipment = () => {
     return totalAll !== totalFromDept;
   }, [totalAll, totalFromDept, selectedDept]);
 
-  /** Tính “VL vs HCM” từ deptTotals */
-  const vlVsHcm = useMemo(() => {
-    const vl = deptTotals
-      .filter((x) => /\(VL\)/i.test(x.deptName))
-      .reduce((s, x) => s + (Number(x.total) || 0), 0);
+  /** ===== Phân bổ theo TÊN THIẾT BỊ: VL vs HCM + bảng Khu vực × Loại ===== */
+  const areaTypeStats = useMemo(() => {
+    const byArea = { "Vĩnh Long": 0, HCM: 0 };
+    const byAreaType = {}; // { area: { type: count } }
+    const typeSet = new Set();
 
-    const total = deptTotals.reduce((s, x) => s + (Number(x.total) || 0), 0);
-    const hcm = Math.max(total - vl, 0);
+    (allDevices || []).forEach((d) => {
+      const area = detectAreaFromDeviceName(d?.name_devices);
+      const type = d?.Devicetype?.device_type || "Khác";
 
-    return { vl, hcm, total };
-  }, [deptTotals]);
+      byArea[area] = (byArea[area] || 0) + 1;
+
+      if (!byAreaType[area]) byAreaType[area] = {};
+      byAreaType[area][type] = (byAreaType[area][type] || 0) + 1;
+
+      typeSet.add(type);
+    });
+
+    const types = Array.from(typeSet).sort((a, b) => a.localeCompare(b, "vi"));
+    const areas = ["Vĩnh Long", "HCM"]; // Cố định thứ tự hiển thị
+    const total = (byArea["Vĩnh Long"] || 0) + (byArea["HCM"] || 0);
+
+    return { byArea, byAreaType, areas, types, total };
+  }, [allDevices]);
+
+  /** Doughnut “VL vs HCM” (tính theo TÊN THIẾT BỊ) */
+  const vlHcmData = useMemo(() => ({
+    labels: ["Vĩnh Long (theo tên thiết bị)", "HCM (còn lại)"],
+    datasets: [{
+      data: [areaTypeStats.byArea["Vĩnh Long"] || 0, areaTypeStats.byArea["HCM"] || 0],
+      backgroundColor: [BASE_COLORS[0], BASE_COLORS[8]],
+      borderWidth: 1,
+    }],
+  }), [areaTypeStats]);
+
+  const vlHcmOptions = useMemo(() => ({
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { position: "bottom", labels: { color: theme.text } },
+      title: {
+        display: true,
+        text: "Phân bổ thiết bị: VL vs HCM (nhận diện theo TÊN THIẾT BỊ: 'SS' ⇒ Vĩnh Long)",
+        color: theme.text
+      },
+      tooltip: {
+        bodyColor: theme.text,
+        titleColor: theme.text,
+        callbacks: {
+          label: (ctx) => {
+            const val = ctx.parsed ?? 0;
+            const pct = areaTypeStats.total ? Math.round((val / areaTypeStats.total) * 100) : 0;
+            return `${ctx.label}: ${val} (${pct}%)`;
+          },
+        },
+      },
+      centerText: {
+        textTop: `${areaTypeStats.total}`,
+        textBottom: "Tổng thiết bị",
+        color: theme.text,
+        subColor: theme.subText,
+      },
+    },
+    cutout: "62%",
+  }), [areaTypeStats, theme]);
 
   /** Colors map cho doughnut (theo loại) */
   const colorMapTypes = useMemo(() => {
@@ -237,42 +316,6 @@ const Statisticsequipment = () => {
     },
     cutout: "62%",
   }), [totalAll, selectedDept, selectedDeptName, theme]);
-
-  /** Doughnut “VL vs HCM” */
-  const vlHcmData = useMemo(() => ({
-    labels: ["Vĩnh Long (VL)", "HCM"],
-    datasets: [{
-      data: [vlVsHcm.vl, vlVsHcm.hcm],
-      backgroundColor: [BASE_COLORS[0], BASE_COLORS[8]],
-      borderWidth: 1,
-    }],
-  }), [vlVsHcm]);
-
-  const vlHcmOptions = useMemo(() => ({
-    maintainAspectRatio: false,
-    plugins: {
-      legend: { position: "bottom", labels: { color: theme.text } },
-      title: { display: true, text: "Phân bổ thiết bị: VL vs HCM", color: theme.text },
-      tooltip: {
-        bodyColor: theme.text,
-        titleColor: theme.text,
-        callbacks: {
-          label: (ctx) => {
-            const val = ctx.parsed ?? 0;
-            const pct = vlVsHcm.total ? Math.round((val / vlVsHcm.total) * 100) : 0;
-            return `${ctx.label}: ${val} (${pct}%)`;
-          },
-        },
-      },
-      centerText: {
-        textTop: `${vlVsHcm.total}`,
-        textBottom: "Tổng thiết bị",
-        color: theme.text,
-        subColor: theme.subText,
-      },
-    },
-    cutout: "62%",
-  }), [vlVsHcm, theme]);
 
   /** Dữ liệu cho Bar ngang (tổng theo phòng ban) */
   const topDeptTotals = useMemo(() => {
@@ -410,11 +453,11 @@ const Statisticsequipment = () => {
           )}
         </div>
 
-        {/* Doughnut: VL vs HCM */}
+        {/* Doughnut: VL vs HCM (theo TÊN THIẾT BỊ) */}
         <div className={`rounded-2xl shadow-sm border p-6 ${theme.cardBg} border ${theme.cardBorder}`}>
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm opacity-80">
-              Tự nhận diện theo tên phòng ban (có “(VL)” → Vĩnh Long; còn lại → HCM)
+              Nhận diện theo <b>TÊN THIẾT BỊ</b>: có “SS” ⇒ <b>Vĩnh Long</b>; còn lại ⇒ <b>HCM</b>
             </span>
           </div>
           <div className="h-[360px]">
@@ -423,13 +466,13 @@ const Statisticsequipment = () => {
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
             <div className="flex items-center gap-2">
               <span className="inline-block h-3 w-3 rounded" style={{ background: BASE_COLORS[0] }} />
-              <span>VL:</span>
-              <span className="ml-auto font-medium tabular-nums">{vlVsHcm.vl}</span>
+              <span>Vĩnh Long:</span>
+              <span className="ml-auto font-medium tabular-nums">{areaTypeStats.byArea["Vĩnh Long"] || 0}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="inline-block h-3 w-3 rounded" style={{ background: BASE_COLORS[8] }} />
               <span>HCM:</span>
-              <span className="ml-auto font-medium tabular-nums">{vlVsHcm.hcm}</span>
+              <span className="ml-auto font-medium tabular-nums">{areaTypeStats.byArea["HCM"] || 0}</span>
             </div>
           </div>
         </div>
@@ -465,6 +508,62 @@ const Statisticsequipment = () => {
         </div>
       </div>
 
+      {/* === Bảng chéo: Khu vực × Loại thiết bị (theo TÊN THIẾT BỊ) === */}
+      <div className="mt-8">
+        <div className={`rounded-2xl shadow-sm border p-6 ${theme.cardBg} border ${theme.cardBorder}`}>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold">🧭 Khu vực × Loại thiết bị (từ TÊN THIẾT BỊ)</h2>
+            <div className="text-sm opacity-80">
+              Tổng: <b>{areaTypeStats.total}</b>
+            </div>
+          </div>
+
+          {areaTypeStats.total === 0 ? (
+            <p className="text-sm opacity-70">Không có dữ liệu.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-[760px] w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-100 dark:bg-slate-900/70">
+                    <th className="py-2 px-3 font-semibold border-b" style={{ borderColor: theme.border }}>
+                      Khu vực \\ Loại thiết bị
+                    </th>
+                    {areaTypeStats.types.map((t) => (
+                      <th key={t} className="py-2 px-3 font-semibold border-b text-right" style={{ borderColor: theme.border }}>
+                        {t}
+                      </th>
+                    ))}
+                    <th className="py-2 px-3 font-semibold border-b text-right" style={{ borderColor: theme.border }}>
+                      Tổng
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {areaTypeStats.areas.map((area, idxArea) => {
+                    const zebra = idxArea % 2 === 0
+                      ? "bg-white dark:bg-slate-800"
+                      : "bg-slate-50 dark:bg-slate-800/80";
+                    const rowTotal = areaTypeStats.byArea[area] || 0;
+                    return (
+                      <tr key={area} className={`${zebra} border-t`} style={{ borderColor: theme.border }}>
+                        <td className="py-2 px-3 whitespace-nowrap">{area}</td>
+                        {areaTypeStats.types.map((t) => {
+                          const val = areaTypeStats.byAreaType?.[area]?.[t] || 0;
+                          return (
+                            <td key={`${area}-${t}`} className="py-2 px-3 text-right">{val}</td>
+                          );
+                        })}
+                        <td className="py-2 px-3 text-right font-semibold">{rowTotal}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* === Thống kê nhanh theo phòng ban (QCTM: 3 PC, 4 Laptop, ...) === */}
       <div className="mt-8">
         <div className={`rounded-2xl shadow-sm border p-6 ${theme.cardBg} border ${theme.cardBorder}`}>
@@ -481,26 +580,32 @@ const Statisticsequipment = () => {
           </div>
 
           {selectedDept ? (
-            quickSummary.length === 0 ? (
-              <p className="text-sm opacity-70">Phòng ban này chưa có dữ liệu thiết bị.</p>
-            ) : (
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {quickSummary.map((it, idx) => (
-                  <div
-                    key={it.label}
-                    className="flex items-center gap-3 px-3 py-2 rounded-lg border"
-                    style={{ borderColor: theme.border }}
-                  >
-                    <span
-                      className="inline-block h-3 w-3 rounded"
-                      style={{ background: BASE_COLORS[idx % BASE_COLORS.length] }}
-                    />
-                    <span className="text-sm truncate" title={it.label}>{it.label}</span>
-                    <span className="ml-auto font-medium tabular-nums">{it.value}</span>
-                  </div>
-                ))}
-              </div>
-            )
+            (() => {
+              const quick = [...deviceStats]
+                .filter(x => (Number(x.value) || 0) > 0)
+                .sort((a, b) => b.value - a.value);
+
+              return quick.length === 0 ? (
+                <p className="text-sm opacity-70">Phòng ban này chưa có dữ liệu thiết bị.</p>
+              ) : (
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {quick.map((it, idx) => (
+                    <div
+                      key={it.label}
+                      className="flex items-center gap-3 px-3 py-2 rounded-lg border"
+                      style={{ borderColor: theme.border }}
+                    >
+                      <span
+                        className="inline-block h-3 w-3 rounded"
+                        style={{ background: BASE_COLORS[idx % BASE_COLORS.length] }}
+                      />
+                      <span className="text-sm truncate" title={it.label}>{it.label}</span>
+                      <span className="ml-auto font-medium tabular-nums">{it.value}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()
           ) : (
             <p className="text-sm opacity-75">
               Hãy chọn phòng ban ở phần “Thiết bị theo loại” hoặc click 1 thanh trong biểu đồ Bar.

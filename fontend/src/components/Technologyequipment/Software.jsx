@@ -7,12 +7,13 @@ import {
   XMarkIcon,
   ArrowPathIcon,
   ComputerDesktopIcon,
-  
   TrashIcon,
   PencilSquareIcon,
   CloudArrowDownIcon,
   Squares2X2Icon,
   CpuChipIcon,
+  EyeIcon,
+  EyeSlashIcon,
 } from "@heroicons/react/24/outline";
 import axios from "../../lib/httpClient";
 
@@ -137,6 +138,34 @@ const Textarea = (props) => (
   />
 );
 
+// ======= Input password có nút hiện/ẩn =======
+const PasswordInput = ({ value, onChange, placeholder = "•••••", ...props }) => {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        {...props}
+        type={show ? "text" : "password"}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        className={
+          "w-full rounded-xl border border-slate-200/70 dark:border-white/10 bg-white dark:bg-slate-950 " +
+          "px-3 py-2 pr-10 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40"
+        }
+      />
+      <button
+        type="button"
+        onClick={() => setShow((s) => !s)}
+        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md hover:bg-slate-100 dark:hover:bg-white/10"
+        title={show ? "Ẩn" : "Hiện"}
+      >
+        {show ? <EyeSlashIcon className="h-5 w-5" /> : <EyeIcon className="h-5 w-5" />}
+      </button>
+    </div>
+  );
+};
+
 // ======= Confirm Modal (Cách 2) =======
 const ConfirmModal = ({ open, title, message, onCancel, onConfirm }) => {
   if (!open) return null;
@@ -162,7 +191,6 @@ const useConfirm = () => {
     onConfirm: null,
   });
 
-  // ✅ Sửa cú pháp useCallback (đặt => ngay sau danh sách tham số)
   const askConfirm = useCallback((msg, onOk, ttl = "Xác nhận") => {
     setState({ open: true, message: msg, title: ttl, onConfirm: onOk });
   }, []);
@@ -190,7 +218,6 @@ const useConfirm = () => {
   return { askConfirm, ConfirmUI };
 };
 
-
 // ======= Tiện ích =======
 const fmtDate = (iso) => {
   if (!iso) return "";
@@ -201,6 +228,16 @@ const fmtDate = (iso) => {
 // bỏ dấu để tìm tiếng Việt
 const stripAccents = (s = "") =>
   s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+// Việt hoá License type
+const LICENSE_VI_OPTIONS = [
+  { value: "per-device", label: "Theo thiết bị" },
+  { value: "per-user", label: "Theo người dùng" },
+  { value: "subscription", label: "Thuê bao (định kỳ)" },
+  { value: "trial", label: "Dùng thử" },
+];
+const licenseViLabel = (value) =>
+  (LICENSE_VI_OPTIONS.find((x) => x.value === value)?.label) || value;
 
 // ======= Typeahead chọn thiết bị =======
 const DeviceTypeahead = ({
@@ -547,10 +584,10 @@ const SoftwareManager = () => {
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
-  <CpuChipIcon className="h-8 w-8 text-indigo-600" />
-  <Squares2X2Icon className="h-6 w-6 text-indigo-400" />
-  <span>Quản lý phần mềm</span>
-</div>
+              <CpuChipIcon className="h-8 w-8 text-indigo-600" />
+              <Squares2X2Icon className="h-6 w-6 text-indigo-400" />
+              <span>Quản lý phần mềm</span>
+            </div>
 
             <p className="text-slate-600 dark:text-slate-300 mt-1">
               Theo dõi danh mục phần mềm và cài đặt trên từng thiết bị.
@@ -655,7 +692,9 @@ const SoftwareManager = () => {
                           <td className="px-4 py-2">{r.version}</td>
                           <td className="px-4 py-2">{r.vendor || "—"}</td>
                           <td className="px-4 py-2">{r.category || "—"}</td>
-                          <td className="px-4 py-2">{r.license_type}</td>
+                          <td className="px-4 py-2">
+                            {licenseViLabel(r.license_type)}
+                          </td>
                           <td className="px-4 py-2">
                             {r.is_active ? (
                               <Badge color="green">Active</Badge>
@@ -918,8 +957,8 @@ const SoftwareManager = () => {
           </div>
 
           <div>
-            <label className="text-sm font-medium">License key (tùy chọn)</label>
-            <Input
+            <label className="text-sm font-medium">License key (tuỳ chọn)</label>
+            <PasswordInput
               value={installForm.license_key_plain}
               onChange={(e) =>
                 setInstallForm((s) => ({
@@ -1000,22 +1039,23 @@ const SoftwareForm = ({ form, setForm }) => {
         />
       </div>
       <div>
-        <label className="text-sm font-medium">License type</label>
+        <label className="text-sm font-medium">Loại giấy phép</label>
         <Select
           value={form.license_type}
           onChange={(e) =>
             setForm((s) => ({ ...s, license_type: e.target.value }))
           }
         >
-          <option value="per-device">per-device</option>
-          <option value="per-user">per-user</option>
-          <option value="subscription">subscription</option>
-          <option value="trial">trial</option>
+          {LICENSE_VI_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
         </Select>
       </div>
       <div>
-        <label className="text-sm font-medium">License key (mask)</label>
-        <Input
+        <label className="text-sm font-medium">License key (mặt nạ/lưu mẫu)</label>
+        <PasswordInput
           value={form.license_key_mask}
           onChange={(e) =>
             setForm((s) => ({ ...s, license_key_mask: e.target.value }))

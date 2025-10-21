@@ -286,40 +286,7 @@ export default function Sidebar() {
               </>
             )}
 
-            {/* Văn bản (manager) */}
-            {showDocs && (
-              <>
-                <h6 className="md:min-w-full text-blueGray-500 dark:text-blueGray-300 text-[11px] tracking-wider uppercase font-bold block pt-1 pb-2">
-                  Văn bản
-                </h6>
-                <ul className="md:flex-col md:min-w-full flex flex-col list-none md:mb-4 gap-1">
-                  <NavGroup
-                    icon="fas fa-file-alt text-blueGray-400"
-                    label="Các loại văn bản"
-                    isOpen={openDocs || startsWith(["/DocumentsManagement"])}
-                    setOpen={setOpenDocs}
-                  >
-                    <li>
-                      <NavLink
-                        to="/DocumentsManagement"
-                        icon="fas fa-folder-open text-blueGray-400"
-                        label="Quản lý văn bản"
-                        active={isActive("/DocumentsManagement")}
-                      />
-                    </li>
-                    <li>
-                      <NavLink
-                        to="#"
-                        icon="fas fa-th-list text-blueGray-400"
-                        label="Danh sách văn bản"
-                        active={false}
-                      />
-                    </li>
-                  </NavGroup>
-                </ul>
-                <hr className="my-4 md:min-w-full" />
-              </>
-            )}
+            
 
             {/* Nhân sự (manager hoặc user.hr) */}
             {showHR && (
@@ -379,7 +346,40 @@ export default function Sidebar() {
                 <hr className="my-4 md:min-w-full" />
               </>
             )}
-
+{/* Văn bản (manager) */}
+            {showDocs && (
+              <>
+                <h6 className="md:min-w-full text-blueGray-500 dark:text-blueGray-300 text-[11px] tracking-wider uppercase font-bold block pt-1 pb-2">
+                  Văn bản
+                </h6>
+                <ul className="md:flex-col md:min-w-full flex flex-col list-none md:mb-4 gap-1">
+                  <NavGroup
+                    icon="fas fa-file-alt text-blueGray-400"
+                    label="Các loại văn bản"
+                    isOpen={openDocs || startsWith(["/DocumentsManagement"])}
+                    setOpen={setOpenDocs}
+                  >
+                    <li>
+                      <NavLink
+                        to="/DocumentsManagement"
+                        icon="fas fa-folder-open text-blueGray-400"
+                        label="Quản lý văn bản"
+                        active={isActive("/DocumentsManagement")}
+                      />
+                    </li>
+                    <li>
+                      <NavLink
+                        to="#"
+                        icon="fas fa-th-list text-blueGray-400"
+                        label="Danh sách văn bản"
+                        active={false}
+                      />
+                    </li>
+                  </NavGroup>
+                </ul>
+                <hr className="my-4 md:min-w-full" />
+              </>
+            )}
             {/* Các Trang chức năng (manager) */}
             {showBCDB && (
               <>
