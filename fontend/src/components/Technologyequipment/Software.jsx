@@ -1,12 +1,11 @@
 // src/components/Technologyequipment/Software.jsx
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MagnifyingGlassIcon,
   PlusCircleIcon,
   CheckCircleIcon,
   XMarkIcon,
   ArrowPathIcon,
-  ComputerDesktopIcon,
   TrashIcon,
   PencilSquareIcon,
   CloudArrowDownIcon,
@@ -17,17 +16,28 @@ import {
 } from "@heroicons/react/24/outline";
 import axios from "../../lib/httpClient";
 
+// ==== Chart (Pie) ====
+import { Pie } from "react-chartjs-2";
+import {
+  Chart as ChartJS,
+  ArcElement,
+  Tooltip,
+  Legend,
+  Title,
+} from "chart.js";
+ChartJS.register(ArcElement, Tooltip, Legend, Title);
+
 /**
- * Software Manager — hiện đại, có typeahead chọn thiết bị
- * Phụ thuộc API backend:
+ * Software Manager
+ * Backend endpoints:
  *  - GET    /api/software?q=&active=true|false
  *  - POST   /api/software
  *  - PUT    /api/software/:id
  *  - DELETE /api/software/:id
+ *  - GET    /api/devices/all
  *  - GET    /api/device-software/by-device/:id?onlyActive=true
  *  - POST   /api/device-software/install
  *  - POST   /api/device-software/uninstall
- *  - GET    /api/devices/all
  */
 
 const API_BASE =
@@ -166,7 +176,7 @@ const PasswordInput = ({ value, onChange, placeholder = "•••••", ...pr
   );
 };
 
-// ======= Confirm Modal (Cách 2) =======
+// ======= Confirm Modal =======
 const ConfirmModal = ({ open, title, message, onCancel, onConfirm }) => {
   if (!open) return null;
   return (
@@ -225,7 +235,6 @@ const fmtDate = (iso) => {
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString();
 };
-// bỏ dấu để tìm tiếng Việt
 const stripAccents = (s = "") =>
   s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
@@ -237,9 +246,9 @@ const LICENSE_VI_OPTIONS = [
   { value: "trial", label: "Dùng thử" },
 ];
 const licenseViLabel = (value) =>
-  (LICENSE_VI_OPTIONS.find((x) => x.value === value)?.label) || value;
+  LICENSE_VI_OPTIONS.find((x) => x.value === value)?.label || value;
 
-// ======= Typeahead chọn thiết bị =======
+// ======= Typeahead chọn thiết bị (modal cài đặt) =======
 const DeviceTypeahead = ({
   open,
   value,
@@ -256,19 +265,30 @@ const DeviceTypeahead = ({
 
   useEffect(() => {
     if (!open) return;
+    let alive = true;
     (async () => {
       try {
         setLoading(true);
         const { data } = await axios.get(fetchUrl);
-        const arr = Array.isArray(data) ? data : [];
+        if (!alive) return;
+        const arr = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.rows)
+          ? data.rows
+          : Array.isArray(data?.items)
+          ? data.items
+          : [];
         setAllDevices(arr);
         setFiltered(arr.slice(0, 8));
       } catch (e) {
         console.error("load devices", e);
       } finally {
-        setLoading(false);
+        if (alive) setLoading(false);
       }
     })();
+    return () => {
+      alive = false;
+    };
   }, [open, fetchUrl]);
 
   useEffect(() => {
@@ -278,10 +298,8 @@ const DeviceTypeahead = ({
     }
     const k = stripAccents(q.toLowerCase());
     const next = allDevices.filter((d) => {
-      const idMatch = String(d.id_devices).includes(k);
-      const nameMatch = stripAccents(
-        (d.name_devices || "").toLowerCase()
-      ).includes(k);
+      const idMatch = String(d.id_devices ?? d.id).includes(k);
+      const nameMatch = stripAccents((d.name_devices || d.name || "").toLowerCase()).includes(k);
       return idMatch || nameMatch;
     });
     setFiltered(next.slice(0, 12));
@@ -289,8 +307,8 @@ const DeviceTypeahead = ({
   }, [q, allDevices]);
 
   const pick = (dev) => {
-    onChange(dev?.id_devices);
-    setQ(`${dev?.name_devices} (#${dev?.id_devices})`);
+    onChange(dev?.id_devices ?? dev?.id);
+    setQ(`${dev?.name_devices || dev?.name} (#${dev?.id_devices ?? dev?.id})`);
     setShow(false);
   };
 
@@ -323,30 +341,25 @@ const DeviceTypeahead = ({
         onKeyDown={onKeyDown}
       />
       {loading && (
-        <div className="absolute right-2 top-2.5 text-xs text-slate-400">
-          Đang tải...
-        </div>
+        <div className="absolute right-2 top-2.5 text-xs text-slate-400">Đang tải...</div>
       )}
       {show && (
         <div className="absolute z-20 mt-1 w-full max-h-72 overflow-auto rounded-xl border border-slate-200/70 dark:border-white/10 bg-white dark:bg-slate-950 shadow-lg">
           {filtered.length === 0 ? (
-            <div className="px-3 py-2 text-sm text-slate-500">
-              Không tìm thấy thiết bị
-            </div>
+            <div className="px-3 py-2 text-sm text-slate-500">Không tìm thấy thiết bị</div>
           ) : (
             filtered.map((d, idx) => (
               <button
-                key={d.id_devices}
+                key={d.id_devices ?? d.id}
                 type="button"
                 onClick={() => pick(d)}
                 className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-white/5 ${
                   idx === highlight ? "bg-slate-50 dark:bg-white/10" : ""
                 }`}
               >
-                <div className="font-medium">{d.name_devices}</div>
+                <div className="font-medium">{d.name_devices || d.name}</div>
                 <div className="text-xs text-slate-500">
-                  ID: {d.id_devices} • OS:{" "}
-                  {d.Operationsystem?.name_operationsystem || "N/A"} • CPU:{" "}
+                  ID: {d.id_devices ?? d.id} • OS: {d.Operationsystem?.name_operationsystem || "N/A"} • CPU:{" "}
                   {d.Cpu?.name_cpu || "N/A"} • RAM: {d.Ram?.name_ram || "N/A"}
                 </div>
               </button>
@@ -354,9 +367,68 @@ const DeviceTypeahead = ({
           )}
         </div>
       )}
-      {value && (
-        <p className="mt-1 text-xs text-slate-500">Đang chọn: #{value}</p>
-      )}
+      {value && <p className="mt-1 text-xs text-slate-500">Đang chọn: #{value}</p>}
+    </div>
+  );
+};
+
+// ======= Biểu đồ tròn phần mềm / số máy =======
+const SoftwarePieChart = ({ stats }) => {
+  if (!stats || stats.length === 0) return null;
+
+  const labels = stats.map((d) => `${d.name}${d.version ? " " + d.version : ""}`);
+  const values = stats.map((d) => d.count);
+
+  const colors = [
+    "#6366F1",
+    "#F59E0B",
+    "#10B981",
+    "#EF4444",
+    "#3B82F6",
+    "#8B5CF6",
+    "#EC4899",
+    "#84CC16",
+    "#F97316",
+    "#06B6D4",
+  ];
+
+  const data = {
+    labels,
+    datasets: [
+      {
+        label: "Số thiết bị",
+        data: values,
+        backgroundColor: labels.map((_, i) => colors[i % colors.length]),
+        borderWidth: 1,
+      },
+    ],
+  };
+
+  const options = {
+    responsive: true,
+    plugins: {
+      legend: { position: "right" },
+      title: {
+        display: true,
+        text: "Tỷ lệ phần mềm được cài theo số máy",
+        font: { size: 14 },
+      },
+      tooltip: {
+        callbacks: {
+          label: (ctx) => {
+            const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+            const val = ctx.parsed;
+            const pct = total ? ((val / total) * 100).toFixed(1) : 0;
+            return `${ctx.label}: ${val} máy (${pct}%)`;
+          },
+        },
+      },
+    },
+  };
+
+  return (
+    <div className="w-full max-w-5xl mx-auto p-4">
+      <Pie data={data} options={options} />
     </div>
   );
 };
@@ -371,7 +443,7 @@ const SoftwareManager = () => {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
 
-  // Pagination (client-side)
+  // Pagination (catalog)
   const [page, setPage] = useState(1);
   const pageSize = 10;
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
@@ -385,7 +457,7 @@ const SoftwareManager = () => {
   const [openEdit, setOpenEdit] = useState(false);
   const [openInstall, setOpenInstall] = useState(false);
 
-  // Confirm (Cách 2)
+  // Confirm
   const { askConfirm, ConfirmUI } = useConfirm();
 
   // Forms
@@ -400,15 +472,23 @@ const SoftwareManager = () => {
     is_active: true,
   });
   const blank = { ...form };
+  const [editing, setEditing] = useState(null);
 
-  const [editing, setEditing] = useState(null); // software row
-
-  // Installations tab state
-  const [deviceId, setDeviceId] = useState("");
-  const [onlyActive, setOnlyActive] = useState(true);
+  // ======= Installs: HIỂN THỊ TẤT CẢ =======
   const [installs, setInstalls] = useState([]);
+  const [instLoading, setInstLoading] = useState(false);
+  const [onlyActive, setOnlyActive] = useState(true);
+  const [devicesIndex, setDevicesIndex] = useState({});
+  const [softwareOptions, setSoftwareOptions] = useState([]);
 
-  const [softwareOptions, setSoftwareOptions] = useState([]); // for install select
+  // search trong tab installs
+  const [installSearch, setInstallSearch] = useState("");
+
+  // Pagination (installs)
+  const [ipage, setIPage] = useState(1);
+  const ipageSize = 12;
+
+  // Form cài đặt
   const [installForm, setInstallForm] = useState({
     id_devices: "",
     id_software: "",
@@ -417,59 +497,165 @@ const SoftwareManager = () => {
     license_key_plain: "",
   });
 
-  // Load catalog
+  // Refs để chống setState sau unmount
+  const mountedRef = useRef(true);
+  const initRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Load catalog (ổn định)
   const loadCatalog = useCallback(async () => {
+    setLoading(true);
     try {
-      setLoading(true);
       const params = {};
       if (query) params.q = query;
       if (active !== "all") params.active = active;
+
       const { data } = await axios.get(`${API_BASE}/software`, { params });
-      setRows(data || []);
+
+      const arr =
+        (Array.isArray(data) && data) ||
+        (Array.isArray(data?.rows) && data.rows) ||
+        (Array.isArray(data?.items) && data.items) ||
+        [];
+
+      if (mountedRef.current) setRows(arr);
     } catch (e) {
       console.error("loadCatalog", e);
+      if (mountedRef.current) setRows([]);
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }, [query, active]);
 
-  // Load software options for install form
-  const loadSoftwareOptions = useCallback(async () => {
+  // Software options cho modal cài đặt
+  const loadSoftwareOptions = async () => {
     try {
-      const { data } = await axios.get(`${API_BASE}/software`, {
-        params: { active: true },
-      });
-      setSoftwareOptions(data || []);
+      const { data } = await axios.get(`${API_BASE}/software`);
+      const arr =
+        (Array.isArray(data) && data) ||
+        (Array.isArray(data?.rows) && data.rows) ||
+        (Array.isArray(data?.items) && data.items) ||
+        [];
+      if (mountedRef.current) setSoftwareOptions(arr.filter((s) => s.is_active !== false));
     } catch (e) {
       console.error("loadSoftwareOptions", e);
+      if (mountedRef.current) setSoftwareOptions([]);
     }
-  }, []);
+  };
 
-  const loadInstalls = useCallback(async () => {
-    if (!deviceId) {
-      setInstalls([]);
-      return;
-    }
+  // Build device index (id -> name)
+  const buildDevicesIndex = async () => {
     try {
-      const { data } = await axios.get(
-        `${API_BASE}/device-software/by-device/${deviceId}`,
-        { params: { onlyActive } }
-      );
-      setInstalls(data || []);
+      const { data } = await axios.get(`${API_BASE}/devices/all`);
+      const arr =
+        (Array.isArray(data) && data) ||
+        (Array.isArray(data?.rows) && data.rows) ||
+        (Array.isArray(data?.items) && data.items) ||
+        [];
+      const idx = {};
+      for (const d of arr) {
+        const id = String(d.id_devices ?? d.id);
+        idx[id] = d.name_devices || d.name || `#${id}`;
+      }
+      if (mountedRef.current) setDevicesIndex(idx);
+      return idx;
     } catch (e) {
-      console.error("loadInstalls", e);
+      console.error("buildDevicesIndex", e);
+      return {};
     }
-  }, [deviceId, onlyActive]);
+  };
 
+  // Helper: chạy promise theo lô
+  const chunked = async (items, size, worker) => {
+    const out = [];
+    for (let i = 0; i < items.length; i += size) {
+      const slice = items.slice(i, i + size);
+      const settled = await Promise.allSettled(slice.map(worker));
+      for (const s of settled) if (s.status === "fulfilled" && s.value) out.push(...s.value);
+    }
+    return out;
+  };
+
+  // Load all installs (ổn định)
+  const loadAllInstalls = async (onlyActiveFlag = onlyActive, indexArg = null) => {
+    if (mountedRef.current) setInstLoading(true);
+    try {
+      const idx =
+        indexArg || (Object.keys(devicesIndex).length ? devicesIndex : await buildDevicesIndex());
+      const deviceIds = Object.keys(idx || {});
+      if (deviceIds.length === 0) {
+        if (mountedRef.current) setInstalls([]);
+        return;
+      }
+
+      const fetchByDevice = async (id) => {
+        try {
+          const { data } = await axios.get(
+            `${API_BASE}/device-software/by-device/${id}`,
+            { params: { onlyActive: onlyActiveFlag } }
+          );
+          /* chuẩn hóa kết quả */
+          return (
+            (Array.isArray(data) && data) ||
+            (Array.isArray(data?.rows) && data.rows) ||
+            (Array.isArray(data?.items) && data.items) ||
+            (data && typeof data === "object" ? [data] : []) ||
+            []
+          );
+        } catch {
+          return [];
+        }
+      };
+
+      const results = await chunked(deviceIds, 5, fetchByDevice);
+
+      // sort ổn định
+      results.sort((a, b) => {
+        const dnA = (a.Device?.name_devices || idx[String(a.id_devices)] || "").toLowerCase();
+        const dnB = (b.Device?.name_devices || idx[String(b.id_devices)] || "").toLowerCase();
+        if (dnA !== dnB) return dnA.localeCompare(dnB);
+        const sA = (a.Software?.name_software || "").toLowerCase();
+        const sB = (b.Software?.name_software || "").toLowerCase();
+        return sA.localeCompare(sB);
+      });
+
+      if (mountedRef.current) setInstalls(results);
+    } finally {
+      if (mountedRef.current) setInstLoading(false);
+    }
+  };
+
+  // Effects
   useEffect(() => {
     loadCatalog();
   }, [loadCatalog]);
 
+  // Khởi tạo 1 lần
   useEffect(() => {
-    loadSoftwareOptions();
-  }, [loadSoftwareOptions]);
+    if (initRef.current) return;
+    initRef.current = true;
+    (async () => {
+      await loadSoftwareOptions();
+      const idx = await buildDevicesIndex();
+      await loadAllInstalls(onlyActive, idx);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Actions – create, update, delete
+  // đổi onlyActive -> reload installs
+  useEffect(() => {
+    if (!initRef.current) return;
+    loadAllInstalls(onlyActive);
+    setIPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onlyActive]);
+
+  // Actions – catalog
   const handleCreate = async () => {
     try {
       const payload = { ...form };
@@ -479,6 +665,7 @@ const SoftwareManager = () => {
       setOpenCreate(false);
       setForm(blank);
       await loadCatalog();
+      await loadSoftwareOptions();
     } catch (e) {
       console.error("handleCreate", e);
       alert(e?.response?.data?.message || "Lỗi tạo phần mềm");
@@ -506,6 +693,7 @@ const SoftwareManager = () => {
       setOpenEdit(false);
       setEditing(null);
       await loadCatalog();
+      await loadSoftwareOptions();
     } catch (e) {
       console.error("handleUpdate", e);
       alert(e?.response?.data?.message || "Lỗi cập nhật");
@@ -513,30 +701,28 @@ const SoftwareManager = () => {
   };
 
   const handleDelete = (row) => {
-    askConfirm(
-      `Xóa phần mềm "${row.name_software} ${row.version}"?`,
-      async () => {
-        try {
-          await axios.delete(`${API_BASE}/software/${row.id_software}`);
-          await loadCatalog();
-        } catch (e) {
-          console.error("handleDelete", e);
-          alert(e?.response?.data?.message || "Không thể xóa");
-        }
+    askConfirm(`Xóa phần mềm "${row.name_software} ${row.version}"?`, async () => {
+      try {
+        await axios.delete(`${API_BASE}/software/${row.id_software}`);
+        await loadCatalog();
+        await loadSoftwareOptions();
+      } catch (e) {
+        console.error("handleDelete", e);
+        alert(e?.response?.data?.message || "Không thể xóa");
       }
-    );
+    });
   };
 
-  // Search
   const doSearch = async () => {
     setPage(1);
     await loadCatalog();
   };
 
-  // Install actions
-  const openInstallModal = () => {
+  // ======= Install actions =======
+  const openInstallModal = async () => {
+    await loadSoftwareOptions();
     setInstallForm({
-      id_devices: deviceId || "",
+      id_devices: "",
       id_software: "",
       installed_by: "",
       note: "",
@@ -551,7 +737,8 @@ const SoftwareManager = () => {
       if (!id_devices || !id_software) return alert("Chọn thiết bị & phần mềm");
       await axios.post(`${API_BASE}/device-software/install`, installForm);
       setOpenInstall(false);
-      await loadInstalls();
+      await loadAllInstalls();
+      setTab("installs");
     } catch (e) {
       console.error("handleInstall", e);
       alert(e?.response?.data?.message || "Cài đặt thất bại");
@@ -567,7 +754,7 @@ const SoftwareManager = () => {
             id_devices: row.id_devices,
             id_software: row.id_software,
           });
-          await loadInstalls();
+          await loadAllInstalls();
         } catch (e) {
           console.error("handleUninstall", e);
           alert(e?.response?.data?.message || "Gỡ thất bại");
@@ -575,6 +762,53 @@ const SoftwareManager = () => {
       }
     );
   };
+
+  // Filters/tìm kiếm installs
+  const filteredInstalls = useMemo(() => {
+    const q = stripAccents((installSearch || "").toLowerCase().trim());
+    if (!q) return installs;
+    const match = (s) => stripAccents(String(s || "").toLowerCase()).includes(q);
+
+    return installs.filter((r) => {
+      const deviceName =
+        r.Device?.name_devices || devicesIndex[String(r.id_devices)] || "";
+      return (
+        match(deviceName) ||
+        match(r.id_devices) ||
+        match(r.Software?.name_software) ||
+        match(r.Software?.version) ||
+        match(r.installed_by)
+      );
+    });
+  }, [installs, installSearch, devicesIndex]);
+
+  const totalIpages = Math.max(1, Math.ceil(filteredInstalls.length / ipageSize));
+  const ipaged = useMemo(
+    () => filteredInstalls.slice((ipage - 1) * ipageSize, ipage * ipageSize),
+    [filteredInstalls, ipage, ipageSize]
+  );
+
+  // ======= Tính dữ liệu cho biểu đồ tròn =======
+  const pieStats = useMemo(() => {
+    // gom theo id_software -> count
+    const map = new Map();
+    for (const r of filteredInstalls) {
+      const s = r.Software || {};
+      const key = String(r.id_software ?? s.id_software ?? "");
+      if (!key) continue;
+      const name = s.name_software || "N/A";
+      const version = s.version || "";
+      const prev = map.get(key) || { name, version, count: 0 };
+      map.set(key, { name, version, count: prev.count + 1 });
+    }
+    // sort desc theo count, lấy top 12, gộp phần còn lại vào "Khác"
+    const arr = Array.from(map.values()).sort((a, b) => b.count - a.count);
+    if (arr.length <= 12) return arr;
+    const top = arr.slice(0, 11);
+    const restCount = arr.slice(11).reduce((sum, x) => sum + x.count, 0);
+    top.push({ name: "Khác", version: "", count: restCount });
+    return top;
+  }, [filteredInstalls]);
 
   // ======= UI =======
   return (
@@ -588,7 +822,6 @@ const SoftwareManager = () => {
               <Squares2X2Icon className="h-6 w-6 text-indigo-400" />
               <span>Quản lý phần mềm</span>
             </div>
-
             <p className="text-slate-600 dark:text-slate-300 mt-1">
               Theo dõi danh mục phần mềm và cài đặt trên từng thiết bị.
             </p>
@@ -625,10 +858,7 @@ const SoftwareManager = () => {
                     style={{ paddingLeft: 36 }}
                   />
                 </div>
-                <Select
-                  value={active}
-                  onChange={(e) => setActive(e.target.value)}
-                >
+                <Select value={active} onChange={(e) => setActive(e.target.value)}>
                   <option value="all">Tất cả</option>
                   <option value="true">Đang hoạt động</option>
                   <option value="false">Ngừng sử dụng</option>
@@ -664,43 +894,26 @@ const SoftwareManager = () => {
                   <tbody className="divide-y divide-slate-100 dark:divide-white/10">
                     {loading ? (
                       <tr>
-                        <td
-                          colSpan={7}
-                          className="px-4 py-6 text-center text-slate-500"
-                        >
+                        <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
                           Đang tải...
                         </td>
                       </tr>
                     ) : paged.length === 0 ? (
                       <tr>
-                        <td
-                          colSpan={7}
-                          className="px-4 py-6 text-center text-slate-500"
-                        >
+                        <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
                           Không có dữ liệu
                         </td>
                       </tr>
                     ) : (
                       paged.map((r) => (
-                        <tr
-                          key={r.id_software}
-                          className="hover:bg-slate-50 dark:hover:bg-white/5"
-                        >
-                          <td className="px-4 py-2 font-medium">
-                            {r.name_software}
-                          </td>
+                        <tr key={r.id_software} className="hover:bg-slate-50 dark:hover:bg-white/5">
+                          <td className="px-4 py-2 font-medium">{r.name_software}</td>
                           <td className="px-4 py-2">{r.version}</td>
                           <td className="px-4 py-2">{r.vendor || "—"}</td>
                           <td className="px-4 py-2">{r.category || "—"}</td>
+                          <td className="px-4 py-2">{licenseViLabel(r.license_type)}</td>
                           <td className="px-4 py-2">
-                            {licenseViLabel(r.license_type)}
-                          </td>
-                          <td className="px-4 py-2">
-                            {r.is_active ? (
-                              <Badge color="green">Active</Badge>
-                            ) : (
-                              <Badge color="red">Inactive</Badge>
-                            )}
+                            {r.is_active ? <Badge color="green">Active</Badge> : <Badge color="red">Inactive</Badge>}
                           </td>
                           <td className="px-4 py-2">
                             <div className="flex items-center gap-2 justify-end">
@@ -730,69 +943,65 @@ const SoftwareManager = () => {
                   <GhostButton onClick={() => setPage(1)} disabled={page === 1}>
                     Đầu
                   </GhostButton>
-                  <GhostButton
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page === 1}
-                  >
+                  <GhostButton onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>
                     Trước
                   </GhostButton>
                   <GhostButton
-                    onClick={() =>
-                      setPage((p) => Math.min(totalPages, p + 1))
-                    }
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                     disabled={page === totalPages}
                   >
                     Sau
                   </GhostButton>
-                  <GhostButton
-                    onClick={() => setPage(totalPages)}
-                    disabled={page === totalPages}
-                  >
+                  <GhostButton onClick={() => setPage(totalPages)} disabled={page === totalPages}>
                     Cuối
                   </GhostButton>
                 </div>
               </div>
             </div>
           ) : (
-            // ===== TAB INSTALLS =====
+            // ===== TAB INSTALLS (hiển thị TẤT CẢ) =====
             <div className="p-5">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="md:col-span-2 flex items-center gap-3">
-                  <div className="flex-1 relative">
-                    <ComputerDesktopIcon className="absolute left-3 top-2.5 h-5 w-5 text-slate-400" />
-                    <Input
-                      placeholder="Nhập ID thiết bị (id_devices)"
-                      value={deviceId}
-                      onChange={(e) => setDeviceId(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && loadInstalls()}
-                      style={{ paddingLeft: 36 }}
-                    />
-                  </div>
-                  <label className="inline-flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={onlyActive}
-                      onChange={(e) => setOnlyActive(e.target.checked)}
-                    />
-                    Chỉ đang cài
-                  </label>
-                  <GhostButton onClick={loadInstalls}>
-                    <ArrowPathIcon className="h-5 w-5" />
-                    Tải
-                  </GhostButton>
+              {/* Biểu đồ tròn thống kê */}
+              <SoftwarePieChart stats={pieStats} />
+
+              {/* Controls */}
+              <div className="mt-6 flex flex-col md:flex-row md:items-center gap-3">
+                <div className="flex-1 relative">
+                  <MagnifyingGlassIcon className="absolute left-3 top-2.5 h-5 w-5 text-slate-400" />
+                  <Input
+                    placeholder="Tìm theo tên thiết bị / ID / phần mềm / version / người cài..."
+                    value={installSearch}
+                    onChange={(e) => {
+                      setInstallSearch(e.target.value);
+                      setIPage(1);
+                    }}
+                    style={{ paddingLeft: 36 }}
+                  />
                 </div>
-                <div className="flex justify-end">
-                  <Button onClick={openInstallModal}>
-                    <PlusCircleIcon className="h-5 w-5" />
-                    Cài phần mềm
-                  </Button>
-                </div>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={onlyActive}
+                    onChange={(e) => setOnlyActive(e.target.checked)}
+                  />
+                  Chỉ đang cài
+                </label>
+                <GhostButton onClick={() => loadAllInstalls(onlyActive)}>
+                  <ArrowPathIcon className="h-5 w-5" />
+                  Làm mới
+                </GhostButton>
+                <Button onClick={openInstallModal}>
+                  <PlusCircleIcon className="h-5 w-5" />
+                  Cài phần mềm
+                </Button>
               </div>
 
+              {/* Table */}
               <div className="mt-5 overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead>
                     <tr className="text-left text-slate-600 dark:text-slate-300">
+                      <th className="px-4 py-2">Thiết bị</th>
                       <th className="px-4 py-2">Phần mềm</th>
                       <th className="px-4 py-2">Version</th>
                       <th className="px-4 py-2">Trạng thái</th>
@@ -803,36 +1012,29 @@ const SoftwareManager = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-white/10">
-                    {!deviceId ? (
+                    {instLoading ? (
                       <tr>
-                        <td
-                          colSpan={7}
-                          className="px-4 py-6 text-center text-slate-500"
-                        >
-                          Nhập ID thiết bị để xem
+                        <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
+                          Đang tải...
                         </td>
                       </tr>
-                    ) : installs.length === 0 ? (
+                    ) : ipaged.length === 0 ? (
                       <tr>
-                        <td
-                          colSpan={7}
-                          className="px-4 py-6 text-center text-slate-500"
-                        >
+                        <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
                           Không có dữ liệu
                         </td>
                       </tr>
                     ) : (
-                      installs.map((r) => (
-                        <tr
-                          key={r.id_device_software}
-                          className="hover:bg-slate-50 dark:hover:bg-white/5"
-                        >
-                          <td className="px-4 py-2 font-medium">
-                            {r.Software?.name_software}
-                          </td>
+                      ipaged.map((r) => (
+                        <tr key={r.id_device_software} className="hover:bg-slate-50 dark:hover:bg-white/5">
                           <td className="px-4 py-2">
-                            {r.Software?.version}
+                            {devicesIndex[String(r.id_devices)] ||
+                              r.Device?.name_devices ||
+                              "(không rõ)"}{" "}
+                            <span className="text-xs text-slate-500">#{r.id_devices}</span>
                           </td>
+                          <td className="px-4 py-2 font-medium">{r.Software?.name_software}</td>
+                          <td className="px-4 py-2">{r.Software?.version}</td>
                           <td className="px-4 py-2">
                             {r.status === "installed" ? (
                               <Badge color="green">Installed</Badge>
@@ -840,17 +1042,13 @@ const SoftwareManager = () => {
                               <Badge color="red">Uninstalled</Badge>
                             )}
                           </td>
-                          <td className="px-4 py-2">
-                            {r.installed_by || "—"}
-                          </td>
+                          <td className="px-4 py-2">{r.installed_by || "—"}</td>
                           <td className="px-4 py-2">{fmtDate(r.install_date)}</td>
                           <td className="px-4 py-2">{r.note || "—"}</td>
                           <td className="px-4 py-2">
                             <div className="flex items-center gap-2 justify-end">
                               {r.status === "installed" ? (
-                                <GhostButton
-                                  onClick={() => handleUninstall(r)}
-                                >
+                                <GhostButton onClick={() => handleUninstall(r)}>
                                   <CloudArrowDownIcon className="h-5 w-5" />
                                   Gỡ
                                 </GhostButton>
@@ -867,17 +1065,37 @@ const SoftwareManager = () => {
                   </tbody>
                 </table>
               </div>
+
+              {/* Pagination installs */}
+              <div className="mt-4 flex items-center justify-between">
+                <p className="text-xs text-slate-500">
+                  Trang {ipage} / {totalIpages} • Tổng {filteredInstalls.length}
+                </p>
+                <div className="flex items-center gap-2">
+                  <GhostButton onClick={() => setIPage(1)} disabled={ipage === 1}>
+                    Đầu
+                  </GhostButton>
+                  <GhostButton onClick={() => setIPage((p) => Math.max(1, p - 1))} disabled={ipage === 1}>
+                    Trước
+                  </GhostButton>
+                  <GhostButton
+                    onClick={() => setIPage((p) => Math.min(totalIpages, p + 1))}
+                    disabled={ipage === totalIpages}
+                  >
+                    Sau
+                  </GhostButton>
+                  <GhostButton onClick={() => setIPage(totalIpages)} disabled={ipage === totalIpages}>
+                    Cuối
+                  </GhostButton>
+                </div>
+              </div>
             </div>
           )}
         </div>
       </div>
 
       {/* MODALS */}
-      <Modal
-        open={openCreate}
-        onClose={() => setOpenCreate(false)}
-        title="Thêm phần mềm"
-      >
+      <Modal open={openCreate} onClose={() => setOpenCreate(false)} title="Thêm phần mềm">
         <SoftwareForm form={form} setForm={setForm} />
         <div className="mt-4 flex items-center justify-end gap-2">
           <GhostButton onClick={() => setOpenCreate(false)}>Hủy</GhostButton>
@@ -888,11 +1106,7 @@ const SoftwareManager = () => {
         </div>
       </Modal>
 
-      <Modal
-        open={openEdit}
-        onClose={() => setOpenEdit(false)}
-        title="Cập nhật phần mềm"
-      >
+      <Modal open={openEdit} onClose={() => setOpenEdit(false)} title="Cập nhật phần mềm">
         <SoftwareForm form={form} setForm={setForm} />
         <div className="mt-4 flex items-center justify-end gap-2">
           <GhostButton onClick={() => setOpenEdit(false)}>Hủy</GhostButton>
@@ -915,30 +1129,33 @@ const SoftwareManager = () => {
             <DeviceTypeahead
               open={openInstall}
               value={installForm.id_devices}
-              onChange={(id) =>
-                setInstallForm((s) => ({ ...s, id_devices: id }))
-              }
-              // fetchUrl mặc định = `${API_BASE}/devices/all`
+              onChange={(id) => setInstallForm((s) => ({ ...s, id_devices: id }))}
             />
           </div>
 
           <div>
             <label className="text-sm font-medium">Chọn phần mềm</label>
             <Select
-              value={installForm.id_software}
+              value={String(installForm.id_software || "")}
               onChange={(e) =>
                 setInstallForm((s) => ({
                   ...s,
-                  id_software: e.target.value,
+                  id_software: e.target.value ? Number(e.target.value) : "",
                 }))
               }
             >
-              <option value="">— Chọn —</option>
-              {softwareOptions.map((s) => (
-                <option key={s.id_software} value={s.id_software}>
-                  {s.name_software} {s.version}
-                </option>
-              ))}
+              {softwareOptions.length === 0 ? (
+                <option value="">— Không có phần mềm hoạt động —</option>
+              ) : (
+                <>
+                  <option value="">— Chọn —</option>
+                  {softwareOptions.map((s) => (
+                    <option key={s.id_software} value={String(s.id_software)}>
+                      {s.name_software} {s.version}
+                    </option>
+                  ))}
+                </>
+              )}
             </Select>
           </div>
 
@@ -975,9 +1192,7 @@ const SoftwareManager = () => {
             <Textarea
               rows={3}
               value={installForm.note}
-              onChange={(e) =>
-                setInstallForm((s) => ({ ...s, note: e.target.value }))
-              }
+              onChange={(e) => setInstallForm((s) => ({ ...s, note: e.target.value }))}
               placeholder="Mục đích cài đặt, phòng ban, ..."
             />
           </div>
@@ -991,7 +1206,6 @@ const SoftwareManager = () => {
         </div>
       </Modal>
 
-      {/* Confirm modal (Cách 2) */}
       {ConfirmUI}
     </div>
   );
@@ -1004,9 +1218,7 @@ const SoftwareForm = ({ form, setForm }) => {
         <label className="text-sm font-medium">Tên phần mềm *</label>
         <Input
           value={form.name_software}
-          onChange={(e) =>
-            setForm((s) => ({ ...s, name_software: e.target.value }))
-          }
+          onChange={(e) => setForm((s) => ({ ...s, name_software: e.target.value }))}
           placeholder="Microsoft Office"
         />
       </div>
@@ -1014,9 +1226,7 @@ const SoftwareForm = ({ form, setForm }) => {
         <label className="text-sm font-medium">Version *</label>
         <Input
           value={form.version}
-          onChange={(e) =>
-            setForm((s) => ({ ...s, version: e.target.value }))
-          }
+          onChange={(e) => setForm((s) => ({ ...s, version: e.target.value }))}
           placeholder="2021"
         />
       </div>
@@ -1032,9 +1242,7 @@ const SoftwareForm = ({ form, setForm }) => {
         <label className="text-sm font-medium">Category</label>
         <Input
           value={form.category}
-          onChange={(e) =>
-            setForm((s) => ({ ...s, category: e.target.value }))
-          }
+          onChange={(e) => setForm((s) => ({ ...s, category: e.target.value }))}
           placeholder="Office, Dev, Design..."
         />
       </div>
@@ -1042,9 +1250,7 @@ const SoftwareForm = ({ form, setForm }) => {
         <label className="text-sm font-medium">Loại giấy phép</label>
         <Select
           value={form.license_type}
-          onChange={(e) =>
-            setForm((s) => ({ ...s, license_type: e.target.value }))
-          }
+          onChange={(e) => setForm((s) => ({ ...s, license_type: e.target.value }))}
         >
           {LICENSE_VI_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
@@ -1057,9 +1263,7 @@ const SoftwareForm = ({ form, setForm }) => {
         <label className="text-sm font-medium">License key (mặt nạ/lưu mẫu)</label>
         <PasswordInput
           value={form.license_key_mask}
-          onChange={(e) =>
-            setForm((s) => ({ ...s, license_key_mask: e.target.value }))
-          }
+          onChange={(e) => setForm((s) => ({ ...s, license_key_mask: e.target.value }))}
           placeholder="XXXXX-XXXXX-XXXXX"
         />
       </div>
@@ -1068,9 +1272,7 @@ const SoftwareForm = ({ form, setForm }) => {
         <Textarea
           rows={3}
           value={form.license_notes}
-          onChange={(e) =>
-            setForm((s) => ({ ...s, license_notes: e.target.value }))
-          }
+          onChange={(e) => setForm((s) => ({ ...s, license_notes: e.target.value }))}
           placeholder="URL portal quản trị, số hợp đồng, ..."
         />
       </div>
@@ -1079,9 +1281,7 @@ const SoftwareForm = ({ form, setForm }) => {
           <input
             type="checkbox"
             checked={form.is_active}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, is_active: e.target.checked }))
-            }
+            onChange={(e) => setForm((s) => ({ ...s, is_active: e.target.checked }))}
           />
           Đang hoạt động
         </label>

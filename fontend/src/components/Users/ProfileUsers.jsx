@@ -16,6 +16,45 @@ const DEFAULT_AVT =
 
 const PAGE_SIZE_DEFAULT = 8;
 
+/* ================== LOCAL CONFIRM CACHE (hide button after refresh) ================== */
+const HIDE_TTL_MS = 10 * 60 * 1000; // 10 phút
+const confirmStoreKey = (uid) => `u:${uid}:confirmHidden`;
+function loadConfirmStore(uid) {
+  try {
+    return JSON.parse(localStorage.getItem(confirmStoreKey(uid)) || "{}");
+  } catch {
+    return {};
+  }
+}
+function saveConfirmStore(uid, obj) {
+  try {
+    localStorage.setItem(confirmStoreKey(uid), JSON.stringify(obj || {}));
+  } catch {}
+}
+function isLocallyHidden(uid, tid) {
+  const store = loadConfirmStore(uid);
+  const ts = store?.[tid];
+  if (!ts) return false;
+  if (Date.now() - ts > HIDE_TTL_MS) {
+    delete store[tid];
+    saveConfirmStore(uid, store);
+    return false;
+  }
+  return true;
+}
+function markLocallyHidden(uid, tid) {
+  const store = loadConfirmStore(uid);
+  store[tid] = Date.now();
+  saveConfirmStore(uid, store);
+}
+function clearLocalHidden(uid, tid) {
+  const store = loadConfirmStore(uid);
+  if (store?.[tid]) {
+    delete store[tid];
+    saveConfirmStore(uid, store);
+  }
+}
+
 /* ================== THEME HOOK ================== */
 function useTheme() {
   const [theme, setTheme] = useState(() => {
@@ -166,6 +205,9 @@ const ProfileUsers = () => {
   const [cpShow, setCpShow] = useState({ nw: false, cf: false });
   const [cpMsg, setCpMsg] = useState({ type: "", text: "" });
   const [cpLoading, setCpLoading] = useState(false);
+
+  // ép re-render khi set local hide
+  const [localHideTick, setLocalHideTick] = useState(0);
 
   // ✅ thêm header x-user-id cho mọi request (backend sẽ đọc đúng user hiện tại)
   useEffect(() => {
@@ -777,6 +819,28 @@ const ProfileUsers = () => {
         // vẫn chỉ giữ ticket do chính user tạo
         .filter((t) => String(t.reported_by) === String(userId));
 
+      // Dọn local hide: nếu server đã user_confirmed=true thì bỏ ẩn; nếu hết TTL cũng bỏ
+      try {
+        const store = loadConfirmStore(userId);
+        let changed = false;
+        normalized.forEach((t) => {
+          const tid = t.id_repair;
+          if (!tid) return;
+          if (t.user_confirmed) {
+            if (store?.[tid]) {
+              delete store[tid];
+              changed = true;
+            }
+          } else {
+            if (store?.[tid] && Date.now() - store[tid] > HIDE_TTL_MS) {
+              delete store[tid];
+              changed = true;
+            }
+          }
+        });
+        if (changed) saveConfirmStore(userId, store);
+      } catch {}
+
       normalized.sort(
         (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)
       );
@@ -915,7 +979,7 @@ const ProfileUsers = () => {
   const pageTickets = useMemo(() => {
     const start = (ticketPage - 1) * ticketPageSize;
     return filteredTickets.slice(start, start + ticketPageSize);
-  }, [filteredTickets, ticketPage, ticketPageSize]);
+  }, [filteredTickets, ticketPage, ticketPageSize, localHideTick]); // 👈 thêm localHideTick
 
   // ----------- CHỐT: chặn xác nhận lặp lại cực nhanh -----------
   const confirmedOnceRef = useRef(new Set());
@@ -937,6 +1001,10 @@ const ProfileUsers = () => {
     confirmedOnceRef.current.add(ticketId);
     setConfirmingId(ticketId);
 
+    // 👉 Ẩn cục bộ ngay để F5 không hiện lại (TTL 10 phút)
+    markLocallyHidden(userId, ticketId);
+    setLocalHideTick((n) => n + 1);
+
     // Optimistic update (giữ tương thích UI hiện tại)
     setMyTickets((prev) =>
       prev.map((t) =>
@@ -955,6 +1023,8 @@ const ProfileUsers = () => {
         )
       );
       confirmedOnceRef.current.delete(ticketId);
+      clearLocalHidden(userId, ticketId);   // 👉 lỗi thì hiện lại nút
+      setLocalHideTick((n) => n + 1);
       alert(e?.response?.data?.message || "Không xác nhận được.");
     } finally {
       setConfirmingId(null);
@@ -1439,7 +1509,8 @@ const ProfileUsers = () => {
                                   isOwner && // chỉ chủ ticket
                                   !t.user_confirmed &&
                                   confirmingId !== t.id_repair &&
-                                  !confirmedOnceRef.current.has(t.id_repair);
+                                  !confirmedOnceRef.current.has(t.id_repair) &&
+                                  !isLocallyHidden(userId, t.id_repair); // 👈 chặn hiện lại nút trong TTL
 
                                 if (canConfirm) {
                                   return (

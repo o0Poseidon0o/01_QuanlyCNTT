@@ -80,9 +80,6 @@ app.use("/api/device-software", deviceSoftwareRoutes);
 
 
 
-
-
-
 // (tuỳ chọn) middleware bắt lỗi cuối cùng để log 500 rõ ràng
 sequelize
   .sync()
